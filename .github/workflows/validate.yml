@@ -1,0 +1,36 @@
+name: Validate app
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feature/financial-dashboard-expense-model
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Type-check
+        run: npm run typecheck
+      - name: Lint
+        if: always()
+        run: npm run lint
+      - name: Run tests
+        if: always()
+        run: npm test
+      - name: Build production app
+        if: always()
+        run: npm run build

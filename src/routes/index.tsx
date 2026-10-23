@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { PlatMap, SHEET_COPY, type SheetId } from "@/components/plat-maps";
 import { buildTodo, dayStamp, depositReminder, displayName, isRenterLot, LOTS, matches, matchesFilter, moveOutLot, parseDay, petFee, rentGap, rentTotal, sheetOf, withEmptyMow, type Guest, type Lot, type LotFilter, type LotStatus, type MaintJob, type Stay } from "@/data/lots";
 import { listVersions, readMaster, restoreVersion, writeMaster } from "@/data/master.functions";
@@ -562,6 +562,86 @@ function matchQuickBooksLot(lots: Lot[], hit: QbHit) {
   return named.length === 1 ? named[0] : undefined;
 }
 
+type BusinessTask = { id: string; title: string; category: string; dueDate: string; followUp: string; status: string; owner: string; cost: string; reference: string; notes: string };
+const BUSINESS_KEY = "magnolia-business-tasks";
+const BUSINESS_CATEGORIES = ["License / permit", "Vehicle", "Title work", "Insurance", "Tax / bill", "Maintenance", "Inspection", "Vendor", "Other"];
+const BUSINESS_STATUSES = ["Open", "In progress", "Waiting", "Completed"];
+
+function businessDays(date: string) {
+  if (!date) return null;
+  const value = new Date(date + "T00:00:00");
+  if (!Number.isFinite(value.getTime())) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((value.getTime() - today.getTime()) / 86400000);
+}
+
+function BusinessBoard() {
+  const [tasks, setTasks] = useState<BusinessTask[]>(() => {
+    try { return JSON.parse(localStorage.getItem(BUSINESS_KEY) ?? "[]") as BusinessTask[]; } catch { return []; }
+  });
+  const [showForm, setShowForm] = useState(false);
+  const [filter, setFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("Title work");
+  const [dueDate, setDueDate] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [owner, setOwner] = useState("");
+  const [cost, setCost] = useState("");
+  const [reference, setReference] = useState("");
+  const [notes, setNotes] = useState("");
+  useEffect(() => { try { localStorage.setItem(BUSINESS_KEY, JSON.stringify(tasks)); } catch { /* current session remains usable */ } }, [tasks]);
+  const active = tasks.filter((task) => task.status !== "Completed");
+  const overdue = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days < 0; });
+  const upcoming = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days >= 0 && days <= 30; });
+  const waiting = active.filter((task) => task.status === "Waiting");
+  const filtered = tasks.filter((task) => (filter === "All" || task.category === filter || task.status === filter || (filter === "Overdue" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! < 0) || (filter === "Due soon" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! >= 0 && businessDays(task.dueDate)! <= 30)) && [task.title, task.category, task.owner, task.reference, task.notes].join(" ").toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => {
+    if (a.status === "Completed" && b.status !== "Completed") return 1;
+    if (b.status === "Completed" && a.status !== "Completed") return -1;
+    return (businessDays(a.dueDate) ?? 99999) - (businessDays(b.dueDate) ?? 99999);
+  });
+  function addTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim()) return;
+    setTasks((current) => [{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 7), title: title.trim(), category, dueDate, followUp, status: "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim() }, ...current]);
+    setTitle(""); setDueDate(""); setFollowUp(""); setOwner(""); setCost(""); setReference(""); setNotes(""); setCategory("Title work"); setShowForm(false);
+  }
+  function exportTasks() {
+    const headers = ["Task", "Category", "Due date", "Follow-up date", "Status", "Responsible", "Cost", "Reference", "Notes"];
+    const rows = tasks.map((task) => [task.title, task.category, task.dueDate, task.followUp, task.status, task.owner, task.cost, task.reference, task.notes]);
+    const csv = [headers, ...rows].map((row) => row.map((cell) => '"' + String(cell ?? "").replace(/"/g, '""') + '"').join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "business-task-tracker.csv"; link.click(); URL.revokeObjectURL(url);
+  }
+  return <div className="business-board">
+    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Renewals, title work, registrations, and follow-ups in one place.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
+    <div className="business-metrics">
+      <button className="business-metric metric-overdue" type="button" onClick={() => setFilter("Overdue")}><span>Overdue</span><strong>{overdue.length}</strong><small>Past due · incomplete</small></button>
+      <button className="business-metric" type="button" onClick={() => setFilter("Due soon")}><span>Due in 30 days</span><strong>{upcoming.length}</strong><small>Upcoming deadlines</small></button>
+      <button className="business-metric" type="button" onClick={() => setFilter("Waiting")}><span>Waiting on others</span><strong>{waiting.length}</strong><small>Follow-up required</small></button>
+      <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
+    </div>
+    {showForm ? <form className="business-form" onSubmit={addTask}><div className="business-form-title"><div><h3>Create business task</h3><p>Track the deadline, next action, and reference details.</p></div></div>
+      <label className="business-field business-field-wide">Task name<input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Submit title transfer for Lot 24" /></label>
+      <label className="business-field">Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{BUSINESS_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label className="business-field">Due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+      <label className="business-field">Follow-up date<input type="date" value={followUp} onChange={(event) => setFollowUp(event.target.value)} /></label>
+      <label className="business-field">Responsible person<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Name or team" /></label>
+      <label className="business-field">Cost / fee ($)<input inputMode="decimal" value={cost} onChange={(event) => setCost(event.target.value)} placeholder="0.00" /></label>
+      <label className="business-field">Reference number<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="VIN, title case, permit #" /></label>
+      <label className="business-field business-field-wide">Notes<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Missing documents, agency contact, next action…" /></label>
+      <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => setShowForm(false)}>Cancel</button><button className="business-primary" type="submit">Save task</button></div>
+    </form> : null}
+    <div className="business-list-head"><div><h3>Business task register</h3><p>{filtered.length} records · nearest deadline first</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
+    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
+    {filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
+      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}</span> : null}</div>{task.notes ? <p className="business-task-notes">{task.notes}</p> : null}</div>
+      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status: event.target.value } : item))}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={"Delete " + task.title}>Remove</button></div>
+    </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
+    <p className="business-storage-note">Saved in this browser on this device. Export a CSV backup regularly; shared multi-user task storage is not yet connected.</p>
+  </div>;
+}
+
 function Home() {
   const uploadRef = useRef<HTMLInputElement>(null);
   const backupRef = useRef<HTMLInputElement>(null);
@@ -571,7 +651,7 @@ function Home() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LotFilter>("all");
   const [selected, setSelected] = useState<string | null>("1");
-  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
+  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat" | "business">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
   const [registerMode, setRegisterMode] = useState<"short" | "full" | "homes">("short");
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
@@ -1022,6 +1102,7 @@ function Home() {
               ["todo", "To-Do"],
               ["mow", "Mow"],
               ["heat", "Financial"],
+              ["business", "Business"],
             ] as const
           ).map(([id, label]) => (
             <button key={id} className="tab" type="button" role="tab" aria-pressed={view === id} onClick={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView(id); }}>
@@ -1249,6 +1330,8 @@ function Home() {
             <AlertBoard lots={lots} onOpen={openLot} />
           ) : view === "heat" ? (
             <HeatBoard lots={lots} scoped={visible} selected={selected} onOpen={openLot} />
+          ) : view === "business" ? (
+            <BusinessBoard />
           ) : view === "register" ? (
             <RegisterTable
               lots={registerMode === "short" ? [...lots].sort(byStreetAddress) : lots}
@@ -2964,7 +3047,7 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
     { key: "sewer", label: "Sewer" },
     { key: "water", label: "Water" },
     { key: "garbage", label: "Garbage" },
-    { key: "wiring", label: "Wiring / electrical" },
+    { key: "wiring", label: "Home wiring insurance" },
     { key: "materials", label: "Materials / supplies" },
     { key: "maintenance", label: "Maintenance" },
     { key: "utilities", label: "Other utilities" },
@@ -2979,6 +3062,10 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
       const amount = parseMoney(expensePools[item.key]) ?? 0;
       if (item.key === "insurance") {
         return sum + (lot.homeIns === "Yes" && insuredHomes.length ? amount / insuredHomes.length : 0);
+      }
+      if (item.key === "wiring") {
+        const wiredHomes = homes.filter((home) => home.wiring === "Yes");
+        return sum + (lot.wiring === "Yes" && wiredHomes.length ? amount / wiredHomes.length : 0);
       }
       return sum + (homes.length ? amount / homes.length : 0);
     }, 0);

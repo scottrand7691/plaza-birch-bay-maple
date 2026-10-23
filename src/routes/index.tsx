@@ -595,6 +595,7 @@ function BusinessBoard() {
   const [saving, setSaving] = useState(false);
   const [storageError, setStorageError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
@@ -651,15 +652,16 @@ function BusinessBoard() {
     event.preventDefault();
     if (!title.trim()) return;
     setSaving(true); setStorageError("");
+    const existing = editingId ? tasks.find((item) => item.id === editingId) : undefined;
     const task: BusinessTask = {
-      id: crypto.randomUUID(), title: title.trim(), category, dueDate, followUp,
-      status: "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim(),
+      id: existing?.id ?? crypto.randomUUID(), title: title.trim(), category, dueDate, followUp,
+      status: existing?.status ?? "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim(),
     };
     try {
-      const saved = await saveBusinessTask({ data: { task, action: "Created" } });
-      setTasks((current) => [saved, ...current]);
+      const saved = await saveBusinessTask({ data: { task, action: existing ? "Updated" : "Created" } });
+      setTasks((current) => existing ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
       setTitle(""); setDueDate(""); setFollowUp(""); setOwner(""); setCost(""); setReference(""); setNotes("");
-      setCategory("Title work"); setShowForm(false);
+      setCategory("Title work"); setShowForm(false); setEditingId(null);
     } catch (error) {
       setStorageError(error instanceof Error ? error.message : "Task could not be saved.");
     } finally { setSaving(false); }
@@ -675,6 +677,14 @@ function BusinessBoard() {
     } catch (error) {
       setStorageError(error instanceof Error ? error.message : "Task status could not be saved.");
     }
+  }
+
+  function beginEdit(task: BusinessTask) {
+    setEditingId(task.id);
+    setTitle(task.title); setCategory(task.category); setDueDate(task.dueDate); setFollowUp(task.followUp);
+    setOwner(task.owner); setCost(task.cost); setReference(task.reference); setNotes(task.notes);
+    setShowForm(true);
+    setStorageError("");
   }
 
   async function removeTask(task: BusinessTask) {
@@ -793,7 +803,7 @@ function BusinessBoard() {
       <button className="business-metric" type="button" onClick={() => setFilter("Follow-up due")}><span>Follow-up due</span><strong>{followUpsDue.length}</strong><small>Check on the next action</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
     </div>
-    {showForm ? <form className="business-form" onSubmit={(event) => void addTask(event)}><div className="business-form-title"><div><h3>Create business task</h3><p>Track the deadline, next action, and reference details.</p></div></div>
+    {showForm ? <form className="business-form" onSubmit={(event) => void addTask(event)}><div className="business-form-title"><div><h3>{editingId ? "Edit business task" : "Create business task"}</h3><p>Track the deadline, next action, and reference details.</p></div></div>
       <label className="business-field business-field-wide">Task name<input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Submit title transfer for Lot 24" /></label>
       <label className="business-field">Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{BUSINESS_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
       <label className="business-field">Due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
@@ -802,7 +812,7 @@ function BusinessBoard() {
       <label className="business-field">Cost / fee ($)<input inputMode="decimal" value={cost} onChange={(event) => setCost(event.target.value)} placeholder="0.00" /></label>
       <label className="business-field">Reference number<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="VIN, title case, permit #" /></label>
       <label className="business-field business-field-wide">Notes<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Missing documents, agency contact, next action…" /></label>
-      <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => setShowForm(false)}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save task"}</button></div>
+      <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editingId ? "Save changes" : "Save task"}</button></div>
     </form> : null}
     <div className="business-list-head"><div><h3>Business task register</h3><p>{loading ? "Loading shared records…" : filtered.length + " records · nearest deadline first"}</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
     <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button><button type="button" aria-pressed={filter === "Follow-up due"} onClick={() => setFilter("Follow-up due")}>Follow-up due</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
@@ -812,7 +822,7 @@ function BusinessBoard() {
         {expandedAttachments[task.id] ? <div className="business-detail-panel"><label className="business-field">Attach PDF or image (max 3 MB)<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void uploadAttachment(task, file); }} /></label>{(attachments[task.id] ?? []).map((item) => <div className="business-attachment" key={item.id}><span>{item.name} · {(item.size / 1024).toFixed(0)} KB</span><button className="business-secondary" type="button" onClick={() => void downloadAttachment(item)}>Download</button><button className="business-delete" type="button" onClick={() => void removeAttachment(task.id, item.id)}>Remove</button></div>)}</div> : null}
         {expandedHistory[task.id] ? <div className="business-detail-panel"><h5>Recent changes</h5>{(history[task.id] ?? []).length ? (history[task.id] ?? []).map((entry) => <div className="business-history-entry" key={entry.id}><strong>{entry.action}</strong><span>{new Date(entry.changedAt).toLocaleString()}</span><small>{entry.snapshot.title || "Task record"}</small></div>) : <p>No change history available.</p>}</div> : null}
       </div>
-      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => void removeTask(task)} aria-label={"Delete " + task.title}>Remove</button></div>
+      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => void removeTask(task)} aria-label={"Delete " + task.title}>Remove</button></div>
     </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
     <p className="business-storage-note">Tasks, change history, and attachments are stored in the shared database and scoped to the signed-in account. Due-date reminders appear in this workspace; external email or push notifications require a separately configured delivery provider.</p>
   </div>;

@@ -571,7 +571,7 @@ function Home() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LotFilter>("all");
   const [selected, setSelected] = useState<string | null>("1");
-  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat">("map");
+  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
   const [registerMode, setRegisterMode] = useState<"short" | "full" | "homes">("short");
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
@@ -2928,16 +2928,67 @@ type HeatMetric = (typeof HEAT_METRICS)[number][0];
 function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lot[]; selected: string | null; onOpen: (id: string) => void }) {
   const [metric, setMetric] = useState<HeatMetric>("overall");
   const homes = lots.filter((lot) => lot.status !== "Open" && lot.status !== "Empty");
-  const shares = insuranceShares(lots);
-  const taxes = lotCostShares(lots);
-  const sewer = sewerShares(lots);
-  const water = waterShares(lots);
-  const garbage = garbageShares(lots);
+  const insuredHomes = homes.filter((lot) => lot.homeIns === "Yes");
+  const poolDefaults = {
+    insurance: "7000",
+    propertyTax: "30000",
+    sewer: "30000",
+    water: "30000",
+    garbage: "30000",
+    wiring: "0",
+    materials: "0",
+    maintenance: "0",
+    utilities: "0",
+    other: "0",
+  };
+  const [expensePools, setExpensePools] = useState<Record<keyof typeof poolDefaults, string>>(() => {
+    try {
+      const saved = typeof window !== "undefined" ? localStorage.getItem("magnolia-financial-expense-pools") : null;
+      return saved ? { ...poolDefaults, ...JSON.parse(saved) } : poolDefaults;
+    } catch {
+      return poolDefaults;
+    }
+  });
+  const updateExpensePool = (key: keyof typeof poolDefaults, value: string) => {
+    const next = { ...expensePools, [key]: value };
+    setExpensePools(next);
+    try {
+      localStorage.setItem("magnolia-financial-expense-pools", JSON.stringify(next));
+    } catch {
+      /* keep the values in the current session if browser storage is unavailable */
+    }
+  };
+  const poolLabels: { key: keyof typeof poolDefaults; label: string }[] = [
+    { key: "insurance", label: "Home insurance" },
+    { key: "propertyTax", label: "Property taxes" },
+    { key: "sewer", label: "Sewer" },
+    { key: "water", label: "Water" },
+    { key: "garbage", label: "Garbage" },
+    { key: "wiring", label: "Wiring / electrical" },
+    { key: "materials", label: "Materials / supplies" },
+    { key: "maintenance", label: "Maintenance" },
+    { key: "utilities", label: "Other utilities" },
+    { key: "other", label: "Other expenses" },
+  ];
+  const annualPoolTotal = poolLabels.reduce((sum, item) => sum + (parseMoney(expensePools[item.key]) ?? 0), 0);
+  const lotSpecificAnnual = (lot: Lot) =>
+    ["maintCost", "mowCost", "acCost", "roofCost", "washCost", "inspectCost", "taxCost", "sewerCost", "waterCost", "garbageCost"]
+      .reduce((sum, key) => sum + (parseMoney(String(lot[key as keyof Lot] ?? "")) ?? 0), 0);
+  const monthlyExpense = (lot: Lot) => {
+    const sharedAnnual = poolLabels.reduce((sum, item) => {
+      const amount = parseMoney(expensePools[item.key]) ?? 0;
+      if (item.key === "insurance") {
+        return sum + (lot.homeIns === "Yes" && insuredHomes.length ? amount / insuredHomes.length : 0);
+      }
+      return sum + (homes.length ? amount / homes.length : 0);
+    }, 0);
+    return (sharedAnnual + lotSpecificAnnual(lot)) / 12;
+  };
   const worseHigh = metric === "monthExpense" || metric === "yearExpense" || metric === "owed";
   const scored = homes
     .flatMap((lot) => {
       const rent = parseMoney(lot.rent) ?? 0;
-      const expense = ((shares.get(lot.id) ?? 0) + (taxes.get(lot.id) ?? 0) + (sewer.get(lot.id) ?? 0) + (water.get(lot.id) ?? 0) + (garbage.get(lot.id) ?? 0)) / 12;
+      const expense = monthlyExpense(lot);
       const profit = rent - expense;
       const ratio = rent > 0 ? (profit / rent) * 100 : profit < 0 ? -100 : null;
       const pets = (lot.dogs === "1" || lot.dogs === "2" ? Number(lot.dogs) : 0) + (lot.cats === "1" || lot.cats === "2" ? Number(lot.cats) : 0);
@@ -2977,7 +3028,7 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
   const metricLabel = HEAT_METRICS.find((item) => item[0] === metric)?.[1] ?? "Value";
   const counted = scoped.filter((lot) => lot.status !== "Open" && lot.status !== "Empty");
   const rentSum = counted.reduce((sum, lot) => sum + (parseMoney(lot.rent) ?? 0), 0);
-  const expenseSum = counted.reduce((sum, lot) => sum + (shares.get(lot.id) ?? 0) + (taxes.get(lot.id) ?? 0) + (sewer.get(lot.id) ?? 0) + (water.get(lot.id) ?? 0) + (garbage.get(lot.id) ?? 0), 0) / 12;
+  const expenseSum = counted.reduce((sum, lot) => sum + monthlyExpense(lot), 0);
   const profitSum = rentSum - expenseSum;
   const owedSum = counted.reduce((sum, lot) => sum + (parseMoney(lot.balance) ?? 0), 0);
   const metricTotal =
@@ -2993,6 +3044,38 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
   const metricText = metric === "roi" || metric === "overall" ? `${Math.round(metricTotal)}%` : dollar(metricTotal);
   return (
     <div className="todo heat-board">
+      <div className="financial-window-actions">
+        <button type="button" className="tab" onClick={() => { window.open(`${window.location.origin}${window.location.pathname}?view=heat`, "_blank", "noopener,noreferrer"); }}>
+          Open financial dashboard in new window ↗
+        </button>
+      </div>
+      <section className="expense-pools" aria-label="Annual expense assumptions">
+        <div className="expense-pools-head">
+          <div>
+            <h3>Annual expense assumptions</h3>
+            <p>Adjust these community-wide costs to match actual bills. Values are saved in this browser.</p>
+          </div>
+          <strong>{dollar(annualPoolTotal)} / year</strong>
+        </div>
+        <div className="expense-pool-grid">
+          {poolLabels.map(({ key, label }) => (
+            <label key={key}>
+              <span>{label}</span>
+              <div className="expense-input-wrap">
+                <span>$</span>
+                <input
+                  aria-label={label + " annual shared expense"}
+                  inputMode="decimal"
+                  value={expensePools[key]}
+                  onChange={(event) => updateExpensePool(key, event.target.value)}
+                />
+                <small>/ yr</small>
+              </div>
+            </label>
+          ))}
+        </div>
+        <p className="expense-pools-note">Shared costs are allocated across occupied lots; home insurance is allocated only across occupied lots marked “Home insurance: Yes.” Existing lot-specific cost fields are added on top. Enter each cost in one place only to avoid double-counting.</p>
+      </section>
       <div className="heat-filters">
         {HEAT_METRICS.map(([id, name]) => (
           <button key={id} className="filter" type="button" aria-pressed={metric === id} onClick={() => setMetric(id)}>
@@ -3014,6 +3097,24 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
           <i style={{ background: "#d5d0c8" }} />
           No figure
         </span>
+      </div>
+      <h3>Profit ranking · green to red · best to worst from left to right</h3>
+      <div className="heat-rank-strip" aria-label={`Lots ranked best to worst by ${metricLabel}`}>
+        {scored.map((row, index) => {
+          const color = paint[row.lot.id];
+          return (
+            <button
+              key={row.lot.id}
+              type="button"
+              title={`Rank ${index + 1}: Lot ${row.lot.lot} · ${label(row.amount)}`}
+              style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}
+              onClick={() => onOpen(row.lot.id)}
+            >
+              <b>{row.lot.lot}</b>
+              <span>{label(row.amount)}</span>
+            </button>
+          );
+        })}
       </div>
       <div className="map-stack">
         {([1, 2, 3] as const).map((id) => (

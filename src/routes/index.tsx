@@ -571,7 +571,7 @@ function Home() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LotFilter>("all");
   const [selected, setSelected] = useState<string | null>("1");
-  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat">("map");
+  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
   const [registerMode, setRegisterMode] = useState<"short" | "full" | "homes">("short");
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
@@ -3044,6 +3044,11 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
   const metricText = metric === "roi" || metric === "overall" ? `${Math.round(metricTotal)}%` : dollar(metricTotal);
   return (
     <div className="todo heat-board">
+      <div className="financial-window-actions">
+        <button type="button" className="tab" onClick={() => { window.open(`${window.location.origin}${window.location.pathname}?view=heat`, "_blank", "noopener,noreferrer"); }}>
+          Open financial dashboard in new window ↗
+        </button>
+      </div>
       <section className="expense-pools" aria-label="Annual expense assumptions">
         <div className="expense-pools-head">
           <div>

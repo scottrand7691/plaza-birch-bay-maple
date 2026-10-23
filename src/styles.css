@@ -2226,3 +2226,27 @@ h1 {
   background: var(--color-paper);
   font-weight: 650;
 }
+
+
+.heat-rank-strip {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  margin: 0 0 18px;
+  scrollbar-width: thin;
+}
+.heat-rank-strip button {
+  flex: 0 0 78px;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  min-height: 58px;
+  padding: 8px 5px;
+  border: 1px solid rgb(0 0 0 / 16%);
+  border-radius: 8px;
+  font: inherit;
+  text-align: center;
+}
+.heat-rank-strip button b { font-size: 14px; }
+.heat-rank-strip button span { font-size: 11px; font-variant-numeric: tabular-nums; }

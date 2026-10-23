@@ -1,8 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 
+export type SerializableValue = string | number | boolean | null | SerializableValue[] | { [key: string]: SerializableValue | undefined };
+
 export type MasterBook = {
   saved: string;
-  lots: any[];
+  lots: SerializableValue[];
 };
 
 const FILE = "data/magnolia-master.json";

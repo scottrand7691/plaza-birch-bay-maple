@@ -2133,3 +2133,85 @@ h1 {
     transition: none;
   }
 }
+
+
+/* Financial expense controls */
+.expense-pools {
+  margin: 0 0 16px;
+  padding: 18px;
+  border: 1px solid color-mix(in oklab, var(--color-ink) 15%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--color-paper);
+}
+.expense-pools-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.expense-pools-head h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  letter-spacing: .04em;
+}
+.expense-pools-head p,
+.expense-pools-note {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.expense-pools-head strong {
+  white-space: nowrap;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.expense-pool-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(135px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.expense-pool-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+.expense-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in oklab, var(--color-ink) 20%, transparent);
+  border-radius: 8px;
+  background: white;
+}
+.expense-input-wrap input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.expense-input-wrap small {
+  flex: none;
+  color: var(--color-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+@media (max-width: 1100px) {
+  .expense-pool-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+}
+@media (max-width: 640px) {
+  .expense-pools { padding: 12px; }
+  .expense-pools-head { flex-direction: column; gap: 8px; }
+  .expense-pool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+}

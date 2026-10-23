@@ -3098,6 +3098,24 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
           No figure
         </span>
       </div>
+      <h3>Profit ranking · green to red · best to worst from left to right</h3>
+      <div className="heat-rank-strip" aria-label={`Lots ranked best to worst by ${metricLabel}`}>
+        {scored.map((row, index) => {
+          const color = paint[row.lot.id];
+          return (
+            <button
+              key={row.lot.id}
+              type="button"
+              title={`Rank ${index + 1}: Lot ${row.lot.lot} · ${label(row.amount)}`}
+              style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}
+              onClick={() => onOpen(row.lot.id)}
+            >
+              <b>{row.lot.lot}</b>
+              <span>{label(row.amount)}</span>
+            </button>
+          );
+        })}
+      </div>
       <div className="map-stack">
         {([1, 2, 3] as const).map((id) => (
           <section key={id} className="map-block">

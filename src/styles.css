@@ -2485,3 +2485,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 @media (prefers-reduced-motion: reduce) {
   button, input, select, textarea, .business-task, .business-metric, .heat-rank-strip button { transition: none !important; }
 }
+
+.stage:has(.business-board) { grid-template-columns: minmax(0, 1fr); }
+.stage:has(.business-board) .panel { display: none; }

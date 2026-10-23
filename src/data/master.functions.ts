@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 
 export type MasterBook = {
   saved: string;
-  lots: unknown[];
+  lots: any[];
 };
 
 const FILE = "data/magnolia-master.json";

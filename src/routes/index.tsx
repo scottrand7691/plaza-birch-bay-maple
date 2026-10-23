@@ -3,6 +3,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type React
 import { PlatMap, SHEET_COPY, type SheetId } from "@/components/plat-maps";
 import { buildTodo, dayStamp, depositReminder, displayName, isRenterLot, LOTS, matches, matchesFilter, moveOutLot, parseDay, petFee, rentGap, rentTotal, sheetOf, withEmptyMow, type Guest, type Lot, type LotFilter, type LotStatus, type MaintJob, type Stay } from "@/data/lots";
 import { listVersions, readMaster, restoreVersion, writeMaster } from "@/data/master.functions";
+import { addBusinessAttachment, deleteBusinessAttachment, deleteBusinessTask, listBusinessAttachments, listBusinessHistory, listBusinessTasks, readBusinessAttachment, saveBusinessTask, type BusinessAttachment, type BusinessHistoryEntry, type BusinessTask } from "@/data/business.functions";
 
 export const Route = createFileRoute("/")({ component: Home });
 
@@ -562,10 +563,9 @@ function matchQuickBooksLot(lots: Lot[], hit: QbHit) {
   return named.length === 1 ? named[0] : undefined;
 }
 
-type BusinessTask = { id: string; title: string; category: string; dueDate: string; followUp: string; status: string; owner: string; cost: string; reference: string; notes: string };
-const BUSINESS_KEY = "magnolia-business-tasks";
 const BUSINESS_CATEGORIES = ["License / permit", "Vehicle", "Title work", "Insurance", "Tax / bill", "Maintenance", "Inspection", "Vendor", "Other"];
 const BUSINESS_STATUSES = ["Open", "In progress", "Waiting", "Completed"];
+const BUSINESS_KEY = "magnolia-business-tasks";
 
 function businessDays(date: string) {
   if (!date) return null;
@@ -575,11 +575,27 @@ function businessDays(date: string) {
   return Math.round((value.getTime() - today.getTime()) / 86400000);
 }
 
-function BusinessBoard() {
-  const [tasks, setTasks] = useState<BusinessTask[]>(() => {
-    try { return JSON.parse(localStorage.getItem(BUSINESS_KEY) ?? "[]") as BusinessTask[]; } catch { return []; }
+function readFileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const comma = value.indexOf(",");
+      if (comma < 0) reject(new Error("The selected file could not be read."));
+      else resolve(value.slice(comma + 1));
+    };
+    reader.onerror = () => reject(new Error("The selected file could not be read."));
+    reader.readAsDataURL(file);
   });
+}
+
+function BusinessBoard() {
+  const [tasks, setTasks] = useState<BusinessTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [storageError, setStorageError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
@@ -590,22 +606,185 @@ function BusinessBoard() {
   const [cost, setCost] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
-  useEffect(() => { try { localStorage.setItem(BUSINESS_KEY, JSON.stringify(tasks)); } catch { /* current session remains usable */ } }, [tasks]);
+  const [attachments, setAttachments] = useState<Record<string, BusinessAttachment[]>>({});
+  const [history, setHistory] = useState<Record<string, BusinessHistoryEntry[]>>({});
+  const [expandedAttachments, setExpandedAttachments] = useState<Record<string, boolean>>({});
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
+  const [legacyCount, setLegacyCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    try {
+      const legacy = JSON.parse(localStorage.getItem(BUSINESS_KEY) ?? "[]");
+      if (Array.isArray(legacy) && !localStorage.getItem(BUSINESS_KEY + "-imported")) {
+        setLegacyCount(legacy.filter((item) => item && typeof item.title === "string").length);
+      }
+    } catch { /* ignore malformed legacy browser data */ }
+    void listBusinessTasks().then((rows) => {
+      if (!active) return;
+      setTasks(rows);
+      setLoading(false);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setStorageError(error instanceof Error ? error.message : "Shared task storage is unavailable.");
+      setLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+
   const active = tasks.filter((task) => task.status !== "Completed");
   const overdue = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days < 0; });
   const upcoming = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days >= 0 && days <= 30; });
+  const followUpsDue = active.filter((task) => { const days = businessDays(task.followUp); return days !== null && days <= 0; });
   const waiting = active.filter((task) => task.status === "Waiting");
-  const filtered = tasks.filter((task) => (filter === "All" || task.category === filter || task.status === filter || (filter === "Overdue" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! < 0) || (filter === "Due soon" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! >= 0 && businessDays(task.dueDate)! <= 30)) && [task.title, task.category, task.owner, task.reference, task.notes].join(" ").toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => {
+  const filtered = tasks.filter((task) => (
+    filter === "All" || task.category === filter || task.status === filter ||
+    (filter === "Overdue" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! < 0) ||
+    (filter === "Due soon" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! >= 0 && businessDays(task.dueDate)! <= 30) ||
+    (filter === "Follow-up due" && task.status !== "Completed" && businessDays(task.followUp) !== null && businessDays(task.followUp)! <= 0)
+  ) && [task.title, task.category, task.owner, task.reference, task.notes].join(" ").toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => {
     if (a.status === "Completed" && b.status !== "Completed") return 1;
     if (b.status === "Completed" && a.status !== "Completed") return -1;
     return (businessDays(a.dueDate) ?? 99999) - (businessDays(b.dueDate) ?? 99999);
   });
-  function addTask(event: FormEvent<HTMLFormElement>) {
+
+  async function addTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!title.trim()) return;
-    setTasks((current) => [{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 7), title: title.trim(), category, dueDate, followUp, status: "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim() }, ...current]);
-    setTitle(""); setDueDate(""); setFollowUp(""); setOwner(""); setCost(""); setReference(""); setNotes(""); setCategory("Title work"); setShowForm(false);
+    setSaving(true); setStorageError("");
+    const existing = editingId ? tasks.find((item) => item.id === editingId) : undefined;
+    const task: BusinessTask = {
+      id: existing?.id ?? crypto.randomUUID(), title: title.trim(), category, dueDate, followUp,
+      status: existing?.status ?? "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim(),
+    };
+    try {
+      const saved = await saveBusinessTask({ data: { task, action: existing ? "Updated" : "Created" } });
+      setTasks((current) => existing ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
+      setTitle(""); setDueDate(""); setFollowUp(""); setOwner(""); setCost(""); setReference(""); setNotes("");
+      setCategory("Title work"); setShowForm(false); setEditingId(null);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Task could not be saved.");
+    } finally { setSaving(false); }
   }
+
+  async function changeStatus(task: BusinessTask, status: string) {
+    const next = { ...task, status };
+    setStorageError("");
+    try {
+      const saved = await saveBusinessTask({ data: { task: next, action: "Updated" } });
+      setTasks((current) => current.map((item) => item.id === saved.id ? saved : item));
+      setHistory((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Task status could not be saved.");
+    }
+  }
+
+  function beginEdit(task: BusinessTask) {
+    setEditingId(task.id);
+    setTitle(task.title); setCategory(task.category); setDueDate(task.dueDate); setFollowUp(task.followUp);
+    setOwner(task.owner); setCost(task.cost); setReference(task.reference); setNotes(task.notes);
+    setShowForm(true);
+    setStorageError("");
+  }
+
+  async function removeTask(task: BusinessTask) {
+    if (!window.confirm("Remove this task and its attachments?")) return;
+    try {
+      await deleteBusinessTask({ data: { id: task.id } });
+      setTasks((current) => current.filter((item) => item.id !== task.id));
+      setAttachments((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
+      setHistory((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Task could not be removed.");
+    }
+  }
+
+  async function toggleAttachments(taskId: string) {
+    const open = !expandedAttachments[taskId];
+    setExpandedAttachments((current) => ({ ...current, [taskId]: open }));
+    if (open && !attachments[taskId]) {
+      try {
+        const rows = await listBusinessAttachments({ data: { taskId } });
+        setAttachments((current) => ({ ...current, [taskId]: rows }));
+      } catch (error) { setStorageError(error instanceof Error ? error.message : "Attachments could not be loaded."); }
+    }
+  }
+
+  async function uploadAttachment(task: BusinessTask, file?: File) {
+    if (!file) return;
+    setStorageError("");
+    try {
+      const dataBase64 = await readFileBase64(file);
+      const attachment = await addBusinessAttachment({ data: {
+        taskId: task.id, name: file.name, mimeType: file.type || "application/octet-stream",
+        size: file.size, dataBase64,
+      }});
+      setAttachments((current) => ({ ...current, [task.id]: [attachment, ...(current[task.id] ?? [])] }));
+      setExpandedAttachments((current) => ({ ...current, [task.id]: true }));
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Attachment could not be uploaded.");
+    }
+  }
+
+  async function downloadAttachment(attachment: BusinessAttachment) {
+    try {
+      const file = await readBusinessAttachment({ data: { id: attachment.id } });
+      if (!file) throw new Error("Attachment not found.");
+      const binary = atob(file.dataBase64);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType }));
+      const link = document.createElement("a"); link.href = url; link.download = file.name; link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) { setStorageError(error instanceof Error ? error.message : "Attachment could not be downloaded."); }
+  }
+
+  async function removeAttachment(taskId: string, attachmentId: string) {
+    try {
+      await deleteBusinessAttachment({ data: { id: attachmentId } });
+      setAttachments((current) => ({ ...current, [taskId]: (current[taskId] ?? []).filter((item) => item.id !== attachmentId) }));
+    } catch (error) { setStorageError(error instanceof Error ? error.message : "Attachment could not be removed."); }
+  }
+
+  async function toggleHistory(taskId: string) {
+    const open = !expandedHistory[taskId];
+    setExpandedHistory((current) => ({ ...current, [taskId]: open }));
+    if (open && !history[taskId]) {
+      try {
+        const rows = await listBusinessHistory({ data: { taskId } });
+        setHistory((current) => ({ ...current, [taskId]: rows }));
+      } catch (error) { setStorageError(error instanceof Error ? error.message : "Change history could not be loaded."); }
+    }
+  }
+
+  async function importLegacyTasks() {
+    let legacy: unknown;
+    try { legacy = JSON.parse(localStorage.getItem(BUSINESS_KEY) ?? "[]"); } catch { legacy = []; }
+    if (!Array.isArray(legacy) || !legacy.length) { setLegacyCount(0); return; }
+    if (!window.confirm("Import tasks saved in this browser into the currently signed-in account? This does not delete the browser copy.")) return;
+    setSaving(true); setStorageError("");
+    try {
+      const imported: BusinessTask[] = [];
+      for (const raw of legacy) {
+        if (!raw || typeof raw !== "object") continue;
+        const old = raw as Partial<BusinessTask>;
+        if (!old.title || !old.category) continue;
+        const task: BusinessTask = {
+          id: crypto.randomUUID(), title: String(old.title).slice(0, 200),
+          category: BUSINESS_CATEGORIES.includes(String(old.category)) ? String(old.category) : "Other",
+          dueDate: String(old.dueDate ?? ""), followUp: String(old.followUp ?? ""),
+          status: BUSINESS_STATUSES.includes(String(old.status)) ? String(old.status) : "Open",
+          owner: String(old.owner ?? ""), cost: String(old.cost ?? ""), reference: String(old.reference ?? ""), notes: String(old.notes ?? ""),
+        };
+        imported.push(await saveBusinessTask({ data: { task, action: "Created" } }));
+      }
+      setTasks((current) => [...imported, ...current]);
+      localStorage.setItem(BUSINESS_KEY + "-imported", new Date().toISOString());
+      setLegacyCount(0);
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Some legacy tasks could not be imported.");
+    } finally { setSaving(false); }
+  }
+
   function exportTasks() {
     const headers = ["Task", "Category", "Due date", "Follow-up date", "Status", "Responsible", "Cost", "Reference", "Notes"];
     const rows = tasks.map((task) => [task.title, task.category, task.dueDate, task.followUp, task.status, task.owner, task.cost, task.reference, task.notes]);
@@ -613,15 +792,18 @@ function BusinessBoard() {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "business-task-tracker.csv"; link.click(); URL.revokeObjectURL(url);
   }
+
   return <div className="business-board">
-    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Renewals, title work, registrations, and follow-ups in one place.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
+    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Shared renewals, title work, registrations, documents, and follow-ups.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
+    {storageError ? <div className="business-error" role="alert">{storageError}<button className="business-secondary" type="button" onClick={() => setStorageError("")}>Dismiss</button></div> : null}
+    {legacyCount > 0 ? <div className="business-notice"><span>{legacyCount} older task(s) were found in this browser and have not been moved to shared storage.</span><button className="business-secondary" type="button" disabled={saving} onClick={() => void importLegacyTasks()}>Import to my account</button></div> : null}
     <div className="business-metrics">
       <button className="business-metric metric-overdue" type="button" onClick={() => setFilter("Overdue")}><span>Overdue</span><strong>{overdue.length}</strong><small>Past due · incomplete</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Due soon")}><span>Due in 30 days</span><strong>{upcoming.length}</strong><small>Upcoming deadlines</small></button>
-      <button className="business-metric" type="button" onClick={() => setFilter("Waiting")}><span>Waiting on others</span><strong>{waiting.length}</strong><small>Follow-up required</small></button>
+      <button className="business-metric" type="button" onClick={() => setFilter("Follow-up due")}><span>Follow-up due</span><strong>{followUpsDue.length}</strong><small>Check on the next action</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
     </div>
-    {showForm ? <form className="business-form" onSubmit={addTask}><div className="business-form-title"><div><h3>Create business task</h3><p>Track the deadline, next action, and reference details.</p></div></div>
+    {showForm ? <form className="business-form" onSubmit={(event) => void addTask(event)}><div className="business-form-title"><div><h3>{editingId ? "Edit business task" : "Create business task"}</h3><p>Track the deadline, next action, and reference details.</p></div></div>
       <label className="business-field business-field-wide">Task name<input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Submit title transfer for Lot 24" /></label>
       <label className="business-field">Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{BUSINESS_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
       <label className="business-field">Due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
@@ -630,15 +812,19 @@ function BusinessBoard() {
       <label className="business-field">Cost / fee ($)<input inputMode="decimal" value={cost} onChange={(event) => setCost(event.target.value)} placeholder="0.00" /></label>
       <label className="business-field">Reference number<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="VIN, title case, permit #" /></label>
       <label className="business-field business-field-wide">Notes<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Missing documents, agency contact, next action…" /></label>
-      <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => setShowForm(false)}>Cancel</button><button className="business-primary" type="submit">Save task</button></div>
+      <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editingId ? "Save changes" : "Save task"}</button></div>
     </form> : null}
-    <div className="business-list-head"><div><h3>Business task register</h3><p>{filtered.length} records · nearest deadline first</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
-    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
-    {filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
-      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}</span> : null}</div>{task.notes ? <p className="business-task-notes">{task.notes}</p> : null}</div>
-      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status: event.target.value } : item))}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={"Delete " + task.title}>Remove</button></div>
+    <div className="business-list-head"><div><h3>Business task register</h3><p>{loading ? "Loading shared records…" : filtered.length + " records · nearest deadline first"}</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
+    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button><button type="button" aria-pressed={filter === "Follow-up due"} onClick={() => setFilter("Follow-up due")}>Follow-up due</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
+    {loading ? <div className="business-empty"><h3>Loading your shared task register</h3><p>Checking the shared database…</p></div> : filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const followDays = businessDays(task.followUp); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
+      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes ? <p className="business-task-notes">{task.notes}</p> : null}
+        <div className="business-inline-actions"><button className="business-secondary" type="button" onClick={() => void toggleAttachments(task.id)}>{expandedAttachments[task.id] ? "Hide documents" : "Documents (" + (attachments[task.id]?.length ?? "…") + ")"}</button><button className="business-secondary" type="button" onClick={() => void toggleHistory(task.id)}>{expandedHistory[task.id] ? "Hide history" : "Change history"}</button></div>
+        {expandedAttachments[task.id] ? <div className="business-detail-panel"><label className="business-field">Attach PDF or image (max 3 MB)<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void uploadAttachment(task, file); }} /></label>{(attachments[task.id] ?? []).map((item) => <div className="business-attachment" key={item.id}><span>{item.name} · {(item.size / 1024).toFixed(0)} KB</span><button className="business-secondary" type="button" onClick={() => void downloadAttachment(item)}>Download</button><button className="business-delete" type="button" onClick={() => void removeAttachment(task.id, item.id)}>Remove</button></div>)}</div> : null}
+        {expandedHistory[task.id] ? <div className="business-detail-panel"><h5>Recent changes</h5>{(history[task.id] ?? []).length ? (history[task.id] ?? []).map((entry) => <div className="business-history-entry" key={entry.id}><strong>{entry.action}</strong><span>{new Date(entry.changedAt).toLocaleString()}</span><small>{entry.snapshot.title || "Task record"}</small></div>) : <p>No change history available.</p>}</div> : null}
+      </div>
+      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => void removeTask(task)} aria-label={"Delete " + task.title}>Remove</button></div>
     </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
-    <p className="business-storage-note">Saved in this browser on this device. Export a CSV backup regularly; shared multi-user task storage is not yet connected.</p>
+    <p className="business-storage-note">Tasks, change history, and attachments are stored in the shared database and scoped to the signed-in account. Due-date reminders appear in this workspace; external email or push notifications require a separately configured delivery provider.</p>
   </div>;
 }
 
@@ -1818,100 +2004,18 @@ const RegisterCell = memo(function RegisterCell({
       </td>
     );
   }
+  if (col.kind !== "field") return <td onClick={stop}>—</td>;
+  const field = col.field;
   return (
     <td onClick={stop}>
       <input
         className="cell-edit"
-        value={String(item[col.field] ?? "")}
-        onChange={(e) => onSave({ ...item, [col.field]: e.target.value })}
+        value={String(item[field] ?? "")}
+        onChange={(e) => onSave({ ...item, [field]: e.target.value })}
       />
     </td>
   );
 });
-
-function EditableCell({
-  item,
-  field,
-  cell,
-  setCell,
-  onSave,
-  display,
-}: {
-  item: Lot;
-  field: keyof Lot;
-  cell: { id: string; field: keyof Lot } | null;
-  setCell: (next: { id: string; field: keyof Lot } | null) => void;
-  onSave: (next: Lot) => void;
-  display?: string;
-}) {
-  const active = cell?.id === item.id && cell.field === field;
-  const raw = item[field];
-  const textValue = typeof raw === "string" ? raw : "";
-  if (active && field === "status") {
-    return (
-      <td>
-        <select
-          className="cell-edit"
-          autoFocus
-          defaultValue={textValue}
-          onClick={(e) => e.stopPropagation()}
-          onBlur={(e) => {
-            const status: LotStatus =
-              e.target.value === "Empty" || e.target.value === "Open" || e.target.value === "Eviction"
-                ? e.target.value
-                : "Occupied";
-            onSave({ ...item, status });
-            setCell(null);
-          }}
-          onChange={(e) => {
-            const status: LotStatus =
-              e.target.value === "Empty" || e.target.value === "Open" || e.target.value === "Eviction"
-                ? e.target.value
-                : "Occupied";
-            onSave({ ...item, status });
-            setCell(null);
-          }}
-        >
-          <option>Occupied</option>
-          <option>Empty</option>
-          <option>Open</option>
-          <option>Eviction</option>
-        </select>
-      </td>
-    );
-  }
-  if (active) {
-    return (
-      <td>
-        <input
-          className="cell-edit"
-          autoFocus
-          defaultValue={textValue}
-          onClick={(e) => e.stopPropagation()}
-          onBlur={(e) => {
-            onSave({ ...item, [field]: e.target.value });
-            setCell(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") setCell(null);
-          }}
-        />
-      </td>
-    );
-  }
-  const text = (display ?? textValue).trim();
-  return (
-    <td
-      onClick={(e) => {
-        e.stopPropagation();
-        setCell({ id: item.id, field });
-      }}
-    >
-      {text || "—"}
-    </td>
-  );
-}
 
 function nameParts(name: string): { first: string; last: string } {
   const raw = name.trim();
@@ -3985,23 +4089,4 @@ function NameSplit({ name, onChange }: { name: string; onChange?: (name: string)
   );
 }
 
-const RECORD_FIELDS: { key: keyof Lot; label: string; cls: string }[] = [
-  { key: "lot", label: "Lot", cls: "v-lot" },
-  { key: "address", label: "Address", cls: "v-address" },
-  { key: "street", label: "Street", cls: "v-street" },
-  { key: "name", label: "Name(s)", cls: "v-name" },
-  { key: "issues", label: "Issues", cls: "v-issues" },
-  { key: "status", label: "Status", cls: "v-status" },
-  { key: "renter", label: "Renter/Owner", cls: "v-renter" },
-  { key: "rent", label: "Rental Amount", cls: "v-rent" },
-  { key: "key", label: "Key", cls: "v-key" },
-  { key: "phone", label: "Phone Number", cls: "v-phone" },
-  { key: "email", label: "Email", cls: "v-email" },
-  { key: "noMow", label: "MOW", cls: "v-flag" },
-  { key: "lateRent", label: "Late Rent", cls: "v-late" },
-  { key: "bouncedCheck", label: "Bounced Check", cls: "v-flag" },
-  { key: "guest", label: "Guest", cls: "v-guest" },
-  { key: "vehicle", label: "Vehicle", cls: "v-vehicle" },
-  { key: "pressureWash", label: "Exterior Pressure Wash", cls: "v-wash" },
-  { key: "violations", label: "Violations", cls: "v-violations" },
-];
+

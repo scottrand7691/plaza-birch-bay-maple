@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   appNameFromHost,
-  createHeadInjector,
+  createHeadInjector as createHeadInjectorBase,
   grokXCreatorHeadTags,
-  injectGrokPwaHead,
+  injectGrokPwaHead as injectGrokPwaHeadBase,
   isDocumentPath,
   isInstallQuery,
   publicAppHost,
@@ -20,6 +20,13 @@ import {
 import { renderInstallPage } from "./grok-pwa-plugin.mjs";
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const ISOLATED_TEST_ROOT = mkdtempSync(join(tmpdir(), "grok-pwa-head-tests-"));
+function injectGrokPwaHead(html, context = {}) {
+  return injectGrokPwaHeadBase(html, { cwd: ISOLATED_TEST_ROOT, ...context });
+}
+function createHeadInjector(context = {}) {
+  return createHeadInjectorBase({ cwd: ISOLATED_TEST_ROOT, ...context });
+}
 
 test("injects before </head>", () => {
   const out = injectGrokPwaHead("<html><head><title>x</title></head><body></body></html>");

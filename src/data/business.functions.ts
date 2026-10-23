@@ -40,7 +40,9 @@ const text = (value: unknown, max = 4000) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 const date = (value: unknown) => {
   const valueText = text(value, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(valueText) ? valueText : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valueText)) return "";
+  const parsed = new Date(valueText + "T00:00:00Z");
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === valueText ? valueText : "";
 };
 const categories = ["License / permit", "Vehicle", "Title work", "Insurance", "Tax / bill", "Maintenance", "Inspection", "Vendor", "Other"];
 const statuses = ["Open", "In progress", "Waiting", "Completed"];
@@ -55,7 +57,7 @@ function normalizeTask(input: unknown): BusinessTask {
   if (!title) throw new Error("Task title is required.");
   if (!categories.includes(category)) throw new Error("Invalid task category.");
   if (!statuses.includes(status)) throw new Error("Invalid task status.");
-  const cost = text(value.cost, 30);
+  const cost = text(value.cost, 30).replace(/[$,\s]/g, "");
   if (cost && !/^\d{1,9}(\.\d{1,2})?$/.test(cost)) throw new Error("Cost must be a non-negative amount.");
   return {
     id: value.id, title, category, status, cost,

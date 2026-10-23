@@ -2964,7 +2964,7 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
     { key: "sewer", label: "Sewer" },
     { key: "water", label: "Water" },
     { key: "garbage", label: "Garbage" },
-    { key: "wiring", label: "Wiring / electrical" },
+    { key: "wiring", label: "Home wiring insurance" },
     { key: "materials", label: "Materials / supplies" },
     { key: "maintenance", label: "Maintenance" },
     { key: "utilities", label: "Other utilities" },
@@ -2979,6 +2979,10 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
       const amount = parseMoney(expensePools[item.key]) ?? 0;
       if (item.key === "insurance") {
         return sum + (lot.homeIns === "Yes" && insuredHomes.length ? amount / insuredHomes.length : 0);
+      }
+      if (item.key === "wiring") {
+        const wiredHomes = homes.filter((home) => home.wiring === "Yes");
+        return sum + (lot.wiring === "Yes" && wiredHomes.length ? amount / wiredHomes.length : 0);
       }
       return sum + (homes.length ? amount / homes.length : 0);
     }, 0);

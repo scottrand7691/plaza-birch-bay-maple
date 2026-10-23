@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { PlatMap, SHEET_COPY, type SheetId } from "@/components/plat-maps";
 import { buildTodo, dayStamp, depositReminder, displayName, isRenterLot, LOTS, matches, matchesFilter, moveOutLot, parseDay, petFee, rentGap, rentTotal, sheetOf, withEmptyMow, type Guest, type Lot, type LotFilter, type LotStatus, type MaintJob, type Stay } from "@/data/lots";
 import { listVersions, readMaster, restoreVersion, writeMaster } from "@/data/master.functions";
@@ -595,12 +595,12 @@ function BusinessBoard() {
   const overdue = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days < 0; });
   const upcoming = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days >= 0 && days <= 30; });
   const waiting = active.filter((task) => task.status === "Waiting");
-  const filtered = tasks.filter((task) => (filter === "All" || task.category === filter || task.status === filter) && [task.title, task.category, task.owner, task.reference, task.notes].join(" ").toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => {
+  const filtered = tasks.filter((task) => (filter === "All" || task.category === filter || task.status === filter || (filter === "Overdue" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! < 0) || (filter === "Due soon" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! >= 0 && businessDays(task.dueDate)! <= 30)) && [task.title, task.category, task.owner, task.reference, task.notes].join(" ").toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => {
     if (a.status === "Completed" && b.status !== "Completed") return 1;
     if (b.status === "Completed" && a.status !== "Completed") return -1;
     return (businessDays(a.dueDate) ?? 99999) - (businessDays(b.dueDate) ?? 99999);
   });
-  function addTask(event: React.FormEvent<HTMLFormElement>) {
+  function addTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!title.trim()) return;
     setTasks((current) => [{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 7), title: title.trim(), category, dueDate, followUp, status: "Open", owner: owner.trim(), cost: cost.trim(), reference: reference.trim(), notes: notes.trim() }, ...current]);
@@ -616,8 +616,8 @@ function BusinessBoard() {
   return <div className="business-board">
     <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Renewals, title work, registrations, and follow-ups in one place.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
     <div className="business-metrics">
-      <button className="business-metric metric-overdue" type="button" onClick={() => setFilter("All")}><span>Overdue</span><strong>{overdue.length}</strong><small>Past due · incomplete</small></button>
-      <button className="business-metric" type="button" onClick={() => setFilter("All")}><span>Due in 30 days</span><strong>{upcoming.length}</strong><small>Upcoming deadlines</small></button>
+      <button className="business-metric metric-overdue" type="button" onClick={() => setFilter("Overdue")}><span>Overdue</span><strong>{overdue.length}</strong><small>Past due · incomplete</small></button>
+      <button className="business-metric" type="button" onClick={() => setFilter("Due soon")}><span>Due in 30 days</span><strong>{upcoming.length}</strong><small>Upcoming deadlines</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Waiting")}><span>Waiting on others</span><strong>{waiting.length}</strong><small>Follow-up required</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
     </div>
@@ -633,7 +633,7 @@ function BusinessBoard() {
       <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => setShowForm(false)}>Cancel</button><button className="business-primary" type="submit">Save task</button></div>
     </form> : null}
     <div className="business-list-head"><div><h3>Business task register</h3><p>{filtered.length} records · nearest deadline first</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
-    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
+    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
     {filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
       <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}</span> : null}</div>{task.notes ? <p className="business-task-notes">{task.notes}</p> : null}</div>
       <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => setTasks((current) => current.map((item) => item.id === task.id ? { ...item, status: event.target.value } : item))}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))} aria-label={"Delete " + task.title}>Remove</button></div>

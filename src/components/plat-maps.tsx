@@ -391,7 +391,7 @@ export function PlatMap({
 }: {
   sheet: SheetId;
   query: string;
-  filter: LotFilter;
+  filter: LotFilter | readonly LotFilter[];
   selected: string | null;
   lots: Lot[];
   textScale?: number;
@@ -406,7 +406,8 @@ export function PlatMap({
   const spec = SHEETS[sheet];
   const [, , vbW, vbH] = spec.viewBox.split(/[ ,]/).map(Number);
   const byId = new Map(lots.map((item) => [item.id, item]));
-  const filtering = query.trim().length > 0 || filter !== "all";
+  const picked = Array.isArray(filter) ? filter : filter === "all" ? [] : [filter];
+  const filtering = query.trim().length > 0 || picked.length > 0;
   const extra = sheet === 2 ? 3.5 : 0;
   return (
     <svg
@@ -485,7 +486,7 @@ export function PlatMap({
         }
         const lot = byId.get(box.id);
         if (!lot) return null;
-        const out = !matchesFilter(lot, filter) || (query.trim().length > 0 && !matches(lot, query));
+        const out = (picked.length > 0 && !picked.some((item) => matchesFilter(lot, item))) || (query.trim().length > 0 && !matches(lot, query));
         return (
           <LotBox
             key={box.id}
@@ -837,6 +838,7 @@ const LotBox = memo(function LotBox({
   return (
     <g
       className={cls}
+      data-lot-id={lot.id}
       style={heat ? ({ "--heat-fill": heat.fill, "--heat-ink": heat.ink } as CSSProperties) : undefined}
       role="button"
       tabIndex={0}

@@ -404,6 +404,7 @@ export type Lot = {
   street: string;
   name: string;
   issues: string;
+  stickies?: { id: string; text: string; color: string }[];
   status: LotStatus;
   maintenance?: string;
   maintCost?: string;

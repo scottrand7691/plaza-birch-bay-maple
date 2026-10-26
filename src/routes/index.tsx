@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { PlatMap, SHEET_COPY, type SheetId } from "@/components/plat-maps";
 import { buildTodo, dayStamp, depositReminder, displayName, isRenterLot, LOTS, matches, matchesFilter, moveOutLot, parseDay, petFee, rentGap, rentTotal, sheetOf, withEmptyMow, type Guest, type Lot, type LotFilter, type LotStatus, type MaintJob, type Stay } from "@/data/lots";
-import { listVersions, readMaster, restoreVersion, writeMaster } from "@/data/master.functions";
+import { listVersions, readMaster, restoreVersion, saveBills, saveBoard, saveMowings, writeMaster } from "@/data/master.functions";
 import { addBusinessAttachment, deleteBusinessAttachment, deleteBusinessTask, listBusinessAttachments, listBusinessHistory, listBusinessTasks, readBusinessAttachment, saveBusinessTask, type BusinessAttachment, type BusinessHistoryEntry, type BusinessTask } from "@/data/business.functions";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -62,9 +62,9 @@ function loadLots(): Lot[] {
 function printTodo(items: { lot: string; address: string; street: string; name: string; notes: string; text: string; date: string; done: boolean }[]) {
   const win = window.open("", "_blank");
   if (!win) return;
-  const rows = groupTodos(items)
-    .map(([street, group]) => {
-      const cards = group.items
+  const rows = noteBands(items)
+    .map(([label, group]) => {
+      const cards = group
         .map(
           (item) => `<article class="${item.done ? "done" : ""}">
         <p class="when">${escapeHtml(item.date ? formatTodoDate(item.date) : "No date")}${item.done ? " · Done" : ""}</p>
@@ -76,7 +76,7 @@ function printTodo(items: { lot: string; address: string; street: string; name: 
       </article>`,
         )
         .join("");
-      return `<h2>${escapeHtml(street)}</h2>${cards}`;
+      return `<h2>${escapeHtml(label)}</h2>${cards}`;
     })
     .join("");
   win.document.open();
@@ -589,14 +589,47 @@ function readFileBase64(file: File): Promise<string> {
   });
 }
 
-function BusinessBoard() {
+function noteTasksFromLots(lots: Lot[]): BusinessTask[] {
+  return buildTodo(lots).flatMap((item) => {
+    const hay = `${item.notes}\n${item.text}`;
+    const hit = (["title", "insurance", "power"] as const).find((word) => new RegExp(`\\b${word}`, "i").test(hay));
+    if (!hit) return [];
+    const category = hit === "title" ? "Title work" : hit === "insurance" ? "Insurance" : "Other";
+    const who = item.name && item.name !== "—" ? item.name : "";
+    const label = hit[0].toUpperCase() + hit.slice(1);
+    return [{
+      id: `lot-note:${item.id}`,
+      title: `Lot ${item.lot}${who ? ` · ${who}` : ""} · ${label}`,
+      category,
+      dueDate: item.date,
+      followUp: "",
+      status: "Open",
+      owner: who,
+      cost: "",
+      reference: item.address || item.lot,
+      notes: [item.notes, item.text].filter(Boolean).join(" · "),
+    }];
+  });
+}
+
+function BusinessBoard({ lots }: { lots: Lot[] }) {
   const [tasks, setTasks] = useState<BusinessTask[]>([]);
+  const [parkBills, setParkBills] = useState<ParkBill[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [storageError, setStorageError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("All");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("magnolia-business-hidden") ?? "[]");
+      return new Set(Array.isArray(raw) ? raw.filter((id) => typeof id === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [search, setSearch] = useState("");
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("Title work");
@@ -611,6 +644,19 @@ function BusinessBoard() {
   const [expandedAttachments, setExpandedAttachments] = useState<Record<string, boolean>>({});
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
   const [legacyCount, setLegacyCount] = useState(0);
+  const [dismissedNotes, setDismissedNotes] = useState<Set<string>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("magnolia-business-note-dismissed") ?? "[]");
+      return new Set(Array.isArray(raw) ? raw.filter((id) => typeof id === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const boardTasks = useMemo(() => {
+    const saved = new Set(tasks.map((task) => task.id));
+    const fromNotes = noteTasksFromLots(lots).filter((task) => !saved.has(task.id) && !dismissedNotes.has(task.id) && !hiddenTasks.has(task.id));
+    return [...fromNotes, ...tasks.filter((task) => !hiddenTasks.has(task.id))];
+  }, [lots, tasks, dismissedNotes, hiddenTasks]);
 
   useEffect(() => {
     let active = true;
@@ -622,7 +668,7 @@ function BusinessBoard() {
     } catch { /* ignore malformed legacy browser data */ }
     void listBusinessTasks().then((rows) => {
       if (!active) return;
-      setTasks(rows);
+      setTasks(rows.filter((row) => !hiddenTasks.has(row.id)));
       setLoading(false);
     }).catch((error: unknown) => {
       if (!active) return;
@@ -632,12 +678,12 @@ function BusinessBoard() {
     return () => { active = false; };
   }, []);
 
-  const active = tasks.filter((task) => task.status !== "Completed");
+  const active = boardTasks.filter((task) => task.status !== "Completed");
   const overdue = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days < 0; });
   const upcoming = active.filter((task) => { const days = businessDays(task.dueDate); return days !== null && days >= 0 && days <= 30; });
   const followUpsDue = active.filter((task) => { const days = businessDays(task.followUp); return days !== null && days <= 0; });
   const waiting = active.filter((task) => task.status === "Waiting");
-  const filtered = tasks.filter((task) => (
+  const filtered = boardTasks.filter((task) => (
     filter === "All" || task.category === filter || task.status === filter ||
     (filter === "Overdue" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! < 0) ||
     (filter === "Due soon" && task.status !== "Completed" && businessDays(task.dueDate) !== null && businessDays(task.dueDate)! >= 0 && businessDays(task.dueDate)! <= 30) ||
@@ -688,14 +734,29 @@ function BusinessBoard() {
   }
 
   async function removeTask(task: BusinessTask) {
-    if (!window.confirm("Remove this task and its attachments?")) return;
+    setConfirmId(null);
+    setHiddenTasks((current) => {
+      const next = new Set(current);
+      next.add(task.id);
+      localStorage.setItem("magnolia-business-hidden", JSON.stringify([...next]));
+      return next;
+    });
+    if (task.id.startsWith("lot-note:")) {
+      setDismissedNotes((current) => {
+        const next = new Set(current);
+        next.add(task.id);
+        localStorage.setItem("magnolia-business-note-dismissed", JSON.stringify([...next]));
+        return next;
+      });
+    }
+    setTasks((current) => current.filter((item) => item.id !== task.id));
+    if (task.id.startsWith("lot-note:") && !tasks.some((item) => item.id === task.id)) return;
     try {
       await deleteBusinessTask({ data: { id: task.id } });
-      setTasks((current) => current.filter((item) => item.id !== task.id));
       setAttachments((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
       setHistory((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
     } catch (error) {
-      setStorageError(error instanceof Error ? error.message : "Task could not be removed.");
+      setStorageError(error instanceof Error ? error.message : "Task could not be removed from shared storage, but it is hidden here.");
     }
   }
 
@@ -787,22 +848,26 @@ function BusinessBoard() {
 
   function exportTasks() {
     const headers = ["Task", "Category", "Due date", "Follow-up date", "Status", "Responsible", "Cost", "Reference", "Notes"];
-    const rows = tasks.map((task) => [task.title, task.category, task.dueDate, task.followUp, task.status, task.owner, task.cost, task.reference, task.notes]);
+    const rows = boardTasks.map((task) => [task.title, task.category, task.dueDate, task.followUp, task.status, task.owner, task.cost, task.reference, task.notes]);
     const csv = [headers, ...rows].map((row) => row.map((cell) => '"' + String(cell ?? "").replace(/"/g, '""') + '"').join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "business-task-tracker.csv"; link.click(); URL.revokeObjectURL(url);
   }
 
   return <div className="business-board">
-    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Shared renewals, title work, registrations, documents, and follow-ups.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
-    {storageError ? <div className="business-error" role="alert">{storageError}<button className="business-secondary" type="button" onClick={() => setStorageError("")}>Dismiss</button></div> : null}
-    {legacyCount > 0 ? <div className="business-notice"><span>{legacyCount} older task(s) were found in this browser and have not been moved to shared storage.</span><button className="business-secondary" type="button" disabled={saving} onClick={() => void importLegacyTasks()}>Import to my account</button></div> : null}
     <div className="business-metrics">
       <button className="business-metric metric-overdue" type="button" onClick={() => setFilter("Overdue")}><span>Overdue</span><strong>{overdue.length}</strong><small>Past due · incomplete</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Due soon")}><span>Due in 30 days</span><strong>{upcoming.length}</strong><small>Upcoming deadlines</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Follow-up due")}><span>Follow-up due</span><strong>{followUpsDue.length}</strong><small>Check on the next action</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
     </div>
+    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button><button type="button" aria-pressed={filter === "Follow-up due"} onClick={() => setFilter("Follow-up due")}>Follow-up due</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
+    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Shared renewals, title work, registrations, documents, and follow-ups.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
+    <BillsBoard onChange={setParkBills}>
+      <BusinessCalendar tasks={boardTasks} bills={parkBills} />
+    </BillsBoard>
+    {storageError ? <div className="business-error" role="alert">{storageError}<button className="business-secondary" type="button" onClick={() => setStorageError("")}>Dismiss</button></div> : null}
+    {legacyCount > 0 ? <div className="business-notice"><span>{legacyCount} older task(s) were found in this browser and have not been moved to shared storage.</span><button className="business-secondary" type="button" disabled={saving} onClick={() => void importLegacyTasks()}>Import to my account</button></div> : null}
     {showForm ? <form className="business-form" onSubmit={(event) => void addTask(event)}><div className="business-form-title"><div><h3>{editingId ? "Edit business task" : "Create business task"}</h3><p>Track the deadline, next action, and reference details.</p></div></div>
       <label className="business-field business-field-wide">Task name<input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Submit title transfer for Lot 24" /></label>
       <label className="business-field">Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{BUSINESS_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -815,17 +880,760 @@ function BusinessBoard() {
       <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editingId ? "Save changes" : "Save task"}</button></div>
     </form> : null}
     <div className="business-list-head"><div><h3>Business task register</h3><p>{loading ? "Loading shared records…" : filtered.length + " records · nearest deadline first"}</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
-    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button><button type="button" aria-pressed={filter === "Follow-up due"} onClick={() => setFilter("Follow-up due")}>Follow-up due</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
     {loading ? <div className="business-empty"><h3>Loading your shared task register</h3><p>Checking the shared database…</p></div> : filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const followDays = businessDays(task.followUp); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
-      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes ? <p className="business-task-notes">{task.notes}</p> : null}
+      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim() ? <p className="business-task-notes">{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim()}</p> : null}{(loadTaskStickies()[task.id] ?? []).map((sticky) => <p className="business-task-notes task-sticky" key={sticky.id} style={{ background: sticky.color }}>{sticky.text}</p>)}
         <div className="business-inline-actions"><button className="business-secondary" type="button" onClick={() => void toggleAttachments(task.id)}>{expandedAttachments[task.id] ? "Hide documents" : "Documents (" + (attachments[task.id]?.length ?? "…") + ")"}</button><button className="business-secondary" type="button" onClick={() => void toggleHistory(task.id)}>{expandedHistory[task.id] ? "Hide history" : "Change history"}</button></div>
         {expandedAttachments[task.id] ? <div className="business-detail-panel"><label className="business-field">Attach PDF or image (max 3 MB)<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void uploadAttachment(task, file); }} /></label>{(attachments[task.id] ?? []).map((item) => <div className="business-attachment" key={item.id}><span>{item.name} · {(item.size / 1024).toFixed(0)} KB</span><button className="business-secondary" type="button" onClick={() => void downloadAttachment(item)}>Download</button><button className="business-delete" type="button" onClick={() => void removeAttachment(task.id, item.id)}>Remove</button></div>)}</div> : null}
         {expandedHistory[task.id] ? <div className="business-detail-panel"><h5>Recent changes</h5>{(history[task.id] ?? []).length ? (history[task.id] ?? []).map((entry) => <div className="business-history-entry" key={entry.id}><strong>{entry.action}</strong><span>{new Date(entry.changedAt).toLocaleString()}</span><small>{entry.snapshot.title || "Task record"}</small></div>) : <p>No change history available.</p>}</div> : null}
       </div>
-      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select><button className="business-delete" type="button" onClick={() => void removeTask(task)} aria-label={"Delete " + task.title}>Remove</button></div>
+      <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select>{confirmId === task.id ? <span className="remove-confirm"><span>Are you sure?</span><button className="business-primary" type="button" onClick={() => void removeTask(task)}>Confirm</button><button className="business-secondary" type="button" onClick={() => setConfirmId(null)}>Cancel</button></span> : <button className="business-delete" type="button" onClick={() => setConfirmId(task.id)} aria-label={"Delete " + task.title}>Remove</button>}</div>
     </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
     <p className="business-storage-note">Tasks, change history, and attachments are stored in the shared database and scoped to the signed-in account. Due-date reminders appear in this workspace; external email or push notifications require a separately configured delivery provider.</p>
   </div>;
+}
+
+type BoardNote = { id: string; kind: "message" | "sticky" | "reminder" | "pin"; text: string; when: string; color: string; x?: number; y?: number; pin?: string };
+
+const BOARD_KEY = "magnolia-meeting-board";
+const TASK_STICKY_KEY = "magnolia-task-stickies";
+type TaskSticky = { id: string; text: string; color: string };
+
+function loadTaskStickies(): Record<string, TaskSticky[]> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TASK_STICKY_KEY) ?? "{}") as Record<string, TaskSticky[]>;
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskSticky(taskId: string, sticky: TaskSticky) {
+  const all = loadTaskStickies();
+  const list = Array.isArray(all[taskId]) ? all[taskId] : [];
+  if (!list.some((item) => item.id === sticky.id)) all[taskId] = [...list, sticky];
+  localStorage.setItem(TASK_STICKY_KEY, JSON.stringify(all));
+}
+
+function eraseTaskSticky(id: string) {
+  const all = loadTaskStickies();
+  for (const key of Object.keys(all)) all[key] = (all[key] ?? []).filter((item) => item.id !== id);
+  localStorage.setItem(TASK_STICKY_KEY, JSON.stringify(all));
+}
+const STICKY_COLORS = [
+  "rgba(240, 130, 0, 0.76)",
+  "rgba(170, 255, 0, 0.7)",
+  "rgba(70, 160, 255, 0.62)",
+  "rgba(255, 64, 64, 0.55)",
+  "rgba(255, 230, 40, 0.75)",
+];
+
+function loadBoard(): BoardNote[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BOARD_KEY) ?? "[]") as BoardNote[];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((item) => item && typeof item.text === "string" && (item.kind === "message" || item.kind === "sticky" || item.kind === "reminder" || item.kind === "pin"));
+  } catch {
+    return [];
+  }
+}
+
+function PinMarks({ notes, pin, open, onOpen, onRemove }: { notes: BoardNote[]; pin: string; open: string; onOpen: (id: string) => void; onRemove: (id: string) => void }) {
+  const pins = notes.filter((note) => note.kind === "pin" && note.pin === pin);
+  if (!pins.length) return null;
+  return (
+    <span className="pin-marks">
+      {pins.map((item) => (
+        <span className="pin-wrap" key={item.id}>
+          <button type="button" className="pin-mark" style={{ background: item.color || "#ffe56a" }} aria-label="Open sticky note" onClick={(event) => { event.stopPropagation(); onOpen(open === item.id ? "" : item.id); }} />
+          {open === item.id ? (
+            <span className="pin-pop" role="note">
+              {item.text}
+              <button type="button" aria-label="Remove sticky" onClick={() => onRemove(item.id)}>×</button>
+            </span>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function taskStickyNotes(task: BusinessTask): BoardNote[] {
+  const found: BoardNote[] = [];
+  for (const match of task.notes.matchAll(/\[\[sticky:([^|\]]+)\|([^\]]+)\]\]([^\n]*)/g)) {
+    found.push({ id: match[2], kind: "pin", text: match[3], when: "", color: match[1], pin: `task:${task.id}` });
+  }
+  return found;
+}
+
+function dropTarget(nodes: Element[]) {
+  for (const node of nodes) {
+    const el = node as HTMLElement;
+    const task = el.closest?.("[data-task-id]") as HTMLElement | null;
+    if (task?.dataset.taskId) return `task:${task.dataset.taskId}`;
+    const todo = el.closest?.("[data-todo-id]") as HTMLElement | null;
+    if (todo?.dataset.todoId) return `todo:${todo.dataset.todoId}`;
+    const day = el.closest?.("[data-date]") as HTMLElement | null;
+    if (day?.dataset.date) return `date:${day.dataset.date}`;
+    const message = el.closest?.("[data-message-id]") as HTMLElement | null;
+    if (message?.dataset.messageId) return `message:${message.dataset.messageId}`;
+    const lot = el.closest?.("[data-lot-id]") as HTMLElement | null;
+    if (lot?.dataset.lotId) return `lot:${lot.dataset.lotId}`;
+  }
+  return "";
+}
+
+function stickySpot(note: BoardNote, index: number) {
+  return {
+    x: typeof note.x === "number" ? note.x : (index % 4) * 176 + 12,
+    y: typeof note.y === "number" ? note.y : Math.floor(index / 4) * 140 + 12,
+  };
+}
+
+function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: string) => void; onSave: (lot: Lot) => void }) {
+  const [notes, setNotes] = useState<BoardNote[]>(() => (typeof window === "undefined" ? [] : loadBoard()));
+  const [text, setText] = useState("");
+  const [stickyText, setStickyText] = useState("");
+  const [stickyColor, setStickyColor] = useState(STICKY_COLORS[4]);
+  const [messageColor, setMessageColor] = useState(STICKY_COLORS[4]);
+  const [colorOpen, setColorOpen] = useState(false);
+  const [messageColorOpen, setMessageColorOpen] = useState(false);
+  const composeDrag = useRef<{ dx: number; dy: number; x: number; y: number; w: number; sx: number; sy: number; live: boolean } | null>(null);
+  const [when, setWhen] = useState("");
+  const [ready, setReady] = useState(false);
+  const [biz, setBiz] = useState<BusinessTask[]>([]);
+  const [bills, setBills] = useState<ParkBill[]>([]);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: string; dx: number; dy: number; x: number; y: number; homeX: number; homeY: number } | null>(null);
+  const [dragging, setDragging] = useState("");
+  const [dropHint, setDropHint] = useState("");
+  const [openPin, setOpenPin] = useState("");
+  const [messagesOpen, setMessagesOpen] = useState(false);
+  const [dragTick, setDragTick] = useState(0);
+  useEffect(() => {
+    let active = true;
+    void readMaster()
+      .then((book) => {
+        if (!active) return;
+        const saved = Array.isArray(book?.board) ? (book.board as BoardNote[]) : [];
+        if (saved.length) {
+          setNotes((current) => {
+            const map = new Map<string, BoardNote>();
+            for (const item of saved) if (item && typeof item.text === "string") map.set(item.id, item);
+            for (const item of current) if (item && typeof item.text === "string") map.set(item.id, item);
+            return [...map.values()];
+          });
+        }
+        if (Array.isArray(book?.bills)) setBills(book.bills.filter((item) => item && typeof (item as ParkBill).name === "string") as ParkBill[]);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setReady(true);
+      });
+    void listBusinessTasks()
+      .then((rows) => {
+        if (active) setBiz(rows);
+      })
+      .catch(() => {});
+    try {
+      const local = JSON.parse(localStorage.getItem(BILLS_KEY) ?? "[]") as ParkBill[];
+      if (Array.isArray(local)) setBills(local.filter((item) => item && typeof item.name === "string"));
+    } catch {
+      /* the calendar still shows tasks */
+    }
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem(BOARD_KEY, JSON.stringify(notes));
+    } catch {
+      /* the notes stay on screen */
+    }
+    const timer = window.setTimeout(() => {
+      void saveBoard({ data: { board: notes } }).catch(() => {});
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [notes, ready]);
+  useEffect(() => {
+    const root = frameRef.current;
+    if (!root) return;
+    const boxes = [...root.querySelectorAll<HTMLElement>("[data-resize]")];
+    for (const el of boxes) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("magnolia-resize-" + el.dataset.resize) ?? "") as { w?: number; h?: number };
+        if (saved.w && el.dataset.resize !== "tasks" && el.dataset.resize !== "todo" && el.dataset.resize !== "calendar" && el.dataset.resize !== "finance" && el.dataset.resize !== "messages") el.style.width = `${saved.w}px`;
+        if (saved.h && el.dataset.resize !== "tasks" && el.dataset.resize !== "todo" && el.dataset.resize !== "calendar" && el.dataset.resize !== "finance") el.style.height = `${saved.h}px`;
+      } catch {
+        /* keep the starting size */
+      }
+    }
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const el = entry.target as HTMLElement;
+        const id = el.dataset.resize;
+        if (!id) continue;
+        localStorage.setItem("magnolia-resize-" + id, JSON.stringify({ w: Math.round(el.offsetWidth), h: Math.round(el.offsetHeight) }));
+      }
+    });
+    boxes.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    setNotes((current) => {
+      const have = new Set(current.map((item) => item.id));
+      const extra: BoardNote[] = [];
+      for (const lot of lots) {
+        for (const sticky of lot.stickies ?? []) {
+          if (!have.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `todo:${lot.id}` });
+        }
+      }
+      for (const task of biz) {
+        for (const sticky of taskStickyNotes(task)) {
+          if (!have.has(sticky.id)) extra.push(sticky);
+        }
+      }
+      for (const [taskId, stickies] of Object.entries(loadTaskStickies())) {
+        for (const sticky of stickies) {
+          if (!have.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `task:${taskId}` });
+        }
+      }
+      return extra.length ? [...extra, ...current] : current;
+    });
+  }, [lots, biz, ready]);
+  function add(kind: BoardNote["kind"]) {
+    const body = text.trim();
+    if (!body || (kind === "reminder" && !when)) return;
+    setNotes((current) => {
+      const stickiesNow = current.filter((item) => item.kind === "sticky").length;
+      return [{ id: `board-${Date.now()}`, kind, text: body, when: kind === "reminder" ? when : "", color: kind === "message" ? messageColor : STICKY_COLORS[current.length % STICKY_COLORS.length], x: kind === "sticky" ? 12 + (stickiesNow % 4) * 176 : undefined, y: kind === "sticky" ? 12 : undefined }, ...current];
+    });
+    setText("");
+    if (kind === "reminder") setWhen("");
+  }
+  function pinCompose(pin: string) {
+    const body = stickyText.trim();
+    if (!body) return;
+    const id = `pin-${Date.now()}`;
+    const target = pin.startsWith("lot:") ? `todo:${pin.slice(4)}` : pin;
+    setNotes((current) => [{ id, kind: "pin", text: body, when: "", color: stickyColor, pin: target }, ...current]);
+    try {
+      const saved = loadBoard().filter((item) => item.id !== id);
+      localStorage.setItem(BOARD_KEY, JSON.stringify([{ id, kind: "pin", text: body, when: "", color: stickyColor, pin: target }, ...saved]));
+    } catch {
+      /* the next render writes the board again */
+    }
+    setStickyText("");
+    setOpenPin(id);
+    rememberPin(id, body, stickyColor, target);
+  }
+  function rememberPin(id: string, body: string, color: string, target: string) {
+    const lotId = target.startsWith("todo:") ? target.slice(5) : target.startsWith("task:lot-note:") ? target.slice("task:lot-note:".length) : "";
+    if (lotId) {
+      const lot = lots.find((item) => item.id === lotId);
+      if (lot) onSave({ ...lot, stickies: [...(lot.stickies ?? []), { id, text: body, color }] });
+    }
+    if (target.startsWith("task:")) {
+      const taskId = target.slice(5);
+      writeTaskSticky(taskId, { id, text: body, color });
+      const task = biz.find((item) => item.id === taskId);
+      if (task && !taskId.startsWith("lot-note:")) {
+        const notesText = `${task.notes ? `${task.notes}\n` : ""}[[sticky:${color}|${id}]]${body}`;
+        const next = { ...task, notes: notesText };
+        setBiz((current) => current.map((item) => (item.id === taskId ? next : item)));
+        void saveBusinessTask({ data: { task: next, action: "Updated" } })
+          .then((saved) => setBiz((current) => current.map((item) => (item.id === saved.id ? saved : item))))
+          .catch(() => {});
+      }
+    }
+  }
+  function forgetPin(id: string) {
+    setNotes((current) => current.filter((item) => item.id !== id));
+    eraseTaskSticky(id);
+    const lot = lots.find((item) => item.stickies?.some((sticky) => sticky.id === id));
+    if (lot) onSave({ ...lot, stickies: (lot.stickies ?? []).filter((sticky) => sticky.id !== id) });
+    const task = biz.find((item) => item.notes.includes(`|${id}]]`));
+    if (task) {
+      const notesText = task.notes.split("\n").filter((line) => !line.includes(`|${id}]]`)).join("\n").trim();
+      void saveBusinessTask({ data: { task: { ...task, notes: notesText }, action: "Updated" } })
+        .then((saved) => setBiz((current) => current.map((item) => (item.id === saved.id ? saved : item))))
+        .catch(() => {});
+    }
+  }
+  const todos = useMemo(() => buildTodo(lots), [lots]);
+  const business = useMemo(() => {
+    const saved = new Set(biz.map((task) => task.id));
+    return [...noteTasksFromLots(lots).filter((task) => !saved.has(task.id)), ...biz].filter((task) => task.status !== "Completed");
+  }, [biz, lots]);
+  const reminders = notes.filter((note) => note.kind === "reminder").sort((a, b) => a.when.localeCompare(b.when));
+  const stickies = notes.filter((note) => note.kind === "sticky");
+  const messages = notes.filter((note) => note.kind === "message");
+  return (
+    <div className="meeting-board" ref={frameRef}>
+      <div className="meeting-main">
+        <div className="meeting-tiles">
+          <section className="meeting-tile bulletin-tile">
+            <h2>Meeting Board</h2>
+            <div className="meeting-compose">
+              <div
+                className={composeDrag.current ? "compose-sticky-wrap is-dragging" : "compose-sticky-wrap"}
+                style={composeDrag.current ? { background: stickyColor, position: "fixed", left: composeDrag.current.x, top: composeDrag.current.y, width: composeDrag.current.w, zIndex: 80, pointerEvents: "none" } : { background: stickyColor }}
+                onPointerDown={(event) => {
+                  const target = event.target as HTMLElement;
+                  if (target.closest("button") || !stickyText.trim()) return;
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  composeDrag.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, w: rect.width, sx: event.clientX, sy: event.clientY, live: false };
+                }}
+                onPointerMove={(event) => {
+                  const active = composeDrag.current;
+                  if (!active) return;
+                  if (!active.live) {
+                    if (Math.hypot(event.clientX - active.sx, event.clientY - active.sy) < 4) return;
+                    active.live = true;
+                    (event.currentTarget.querySelector("textarea") as HTMLTextAreaElement | null)?.blur();
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }
+                  active.x = event.clientX - active.dx;
+                  active.y = event.clientY - active.dy;
+                  const hint = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+                  setDropHint((current) => (current === hint ? current : hint));
+                  setDragTick((tick) => tick + 1);
+                }}
+                onPointerUp={(event) => {
+                  const active = composeDrag.current;
+                  if (!active) return;
+                  const pin = active.live ? dropTarget(document.elementsFromPoint(event.clientX, event.clientY)) : "";
+                  const left = Math.round(active.x);
+                  const top = Math.round(active.y);
+                  const body = stickyText.trim();
+                  composeDrag.current = null;
+                  setDropHint("");
+                  setDragTick((tick) => tick + 1);
+                  if (pin) {
+                    pinCompose(pin);
+                    return;
+                  }
+                  if (active.live && body) {
+                    setNotes((current) => [{ id: `board-${Date.now()}`, kind: "sticky", text: body, when: "", color: stickyColor, x: left, y: top }, ...current]);
+                    setStickyText("");
+                  }
+                }}
+              >
+                <button type="button" className="sticky-color" style={{ background: stickyColor }} aria-label="Choose sticky color" aria-expanded={colorOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setColorOpen((open) => !open)} />
+                {colorOpen ? (
+                  <span className="sticky-colors">
+                    {STICKY_COLORS.map((color) => (
+                      <button key={color} type="button" style={{ background: color }} aria-label={`Sticky color ${color}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setStickyColor(color); setColorOpen(false); }} />
+                    ))}
+                  </span>
+                ) : null}
+                <textarea
+                  className="compose-sticky"
+                  rows={3}
+                  value={stickyText}
+                  placeholder="Sticky note"
+                  onChange={(event) => setStickyText(event.target.value)}
+                />
+              </div>
+            </div>
+          </section>
+          <div className="message-float meeting-tile" data-resize="messages">
+            {messages.length > 2 ? (
+              <button type="button" className="message-all" onClick={() => setMessagesOpen((open) => !open)}>{messagesOpen ? "Show latest" : "All messages"}</button>
+            ) : null}
+            {messages.length ? (
+              <ul className="meeting-messages">
+                {(messagesOpen ? messages : messages.slice(0, 2)).map((note, index) => (
+                  <li key={note.id} data-message-id={note.id} className={dropHint === `message:${note.id}` ? "drop-ready" : ""} style={{ background: note.color || "#fff" }}>
+                    <p>{index === 0 ? <b>Latest</b> : index === 1 ? <b>Previous</b> : null} {note.text}</p>
+                    <PinMarks notes={notes} pin={`message:${note.id}`} open={openPin} onOpen={setOpenPin} onRemove={forgetPin} />
+                    <button type="button" aria-label="Remove message" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="message-empty">No messages yet.</p>}
+            <div className="message-compose">
+              <textarea
+                className="message-write"
+                rows={2}
+                value={text}
+                placeholder="Write a message"
+                style={{ background: messageColor }}
+                onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    add("message");
+                  }
+                }}
+              />
+              <button type="button" className="sticky-color message-color" style={{ background: messageColor }} aria-label="Choose message color" aria-expanded={messageColorOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setMessageColorOpen((open) => !open)} />
+              {messageColorOpen ? (
+                <span className="sticky-colors message-colors">
+                  {STICKY_COLORS.map((color) => (
+                    <button key={color} type="button" style={{ background: color }} aria-label={`Message color ${color}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setMessageColor(color); setMessageColorOpen(false); }} />
+                  ))}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        <section className="mini-list resize-box" data-resize="tasks">
+          <h3>Business tasks</h3>
+          {business.length === 0 ? <p>No open tasks.</p> : (
+            <ul>
+              {business.map((task) => (
+                <li key={task.id} data-task-id={task.id} className={dropHint === `task:${task.id}` ? "drop-ready" : ""}>
+                  <b>{task.title}</b>
+                  <small>{task.category}{task.dueDate ? ` · ${task.dueDate}` : ""}</small>
+                  <PinMarks notes={[...notes, ...(loadTaskStickies()[task.id] ?? []).filter((sticky) => !notes.some((item) => item.id === sticky.id)).map((sticky) => ({ id: sticky.id, kind: "pin" as const, text: sticky.text, when: "", color: sticky.color, pin: `task:${task.id}` }))]} pin={`task:${task.id}`} open={openPin} onOpen={setOpenPin} onRemove={forgetPin} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="mini-list resize-box" data-resize="todo">
+          <h3>To-Do</h3>
+          {todos.length === 0 ? <p>Nothing open.</p> : (
+            <ul>
+              {todos.map((item) => (
+                <li key={item.id} data-todo-id={item.id} className={dropHint === `todo:${item.id}` ? "drop-ready" : ""}>
+                  <button type="button" onClick={() => onOpen(item.id)}>
+                    <b>Lot {item.lot}</b> {item.name || "—"}
+                    <small>{item.notes || item.text || "No notes"}</small>
+                  </button>
+                  <PinMarks
+                    notes={[
+                      ...notes.map((note) => (note.pin === `lot:${item.id}` ? { ...note, pin: `todo:${item.id}` } : note)),
+                      ...(lots.find((lot) => lot.id === item.id)?.stickies ?? [])
+                        .filter((sticky) => !notes.some((note) => note.id === sticky.id))
+                        .map((sticky) => ({ id: sticky.id, kind: "pin" as const, text: sticky.text, when: "", color: sticky.color, pin: `todo:${item.id}` })),
+                    ]}
+                    pin={`todo:${item.id}`}
+                    open={openPin}
+                    onOpen={setOpenPin}
+                    onRemove={forgetPin}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="mini-calendar resize-box" data-resize="calendar">
+          <BusinessCalendar
+            mini
+            dropDate={dropHint.startsWith("date:") ? dropHint.slice(5) : ""}
+            pins={notes.filter((note) => note.kind === "pin" && note.pin?.startsWith("date:"))}
+            openPin={openPin}
+            onPin={setOpenPin}
+            bills={bills}
+            tasks={[
+              ...business,
+              ...reminders.map((note) => ({ id: note.id, title: note.text, category: "Other", dueDate: note.when, followUp: "", status: "Open", owner: "", cost: "", reference: "", notes: note.text })),
+            ]}
+          />
+        </section>
+        <section className="mini-finance resize-box" data-resize="finance">
+          <h3>Financial</h3>
+          <HeatBoard lots={lots} scoped={lots} selected={null} onOpen={onOpen} mini />
+        </section>
+        </div>
+        {reminders.length ? (
+          <section>
+            <h3>Reminders</h3>
+            <ul className="meeting-reminders">
+              {reminders.map((note) => (
+                <li key={note.id} className={note.when < dayStamp() ? "is-due" : ""}>
+                  <time>{formatTodoDate(note.when)}</time>
+                  <p>{note.text}</p>
+                  <button type="button" aria-label="Remove reminder" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
+      {stickies.map((note) => {
+        const live = drag.current?.id === note.id;
+        const spot = live ? { x: drag.current!.x, y: drag.current!.y } : { x: note.x ?? 40, y: note.y ?? 80 };
+        return (
+          <article
+            key={note.id}
+            className={dragging === note.id ? "sticky is-dragging" : "sticky"}
+            style={{ background: note.color, position: "fixed", left: spot.x, top: spot.y, zIndex: live ? 80 : 30, pointerEvents: live ? "none" : "auto" }}
+            onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest("button")) return;
+              const rect = event.currentTarget.getBoundingClientRect();
+              drag.current = { id: note.id, dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, homeX: rect.left, homeY: rect.top };
+              setDragging(note.id);
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const active = drag.current;
+              if (!active || active.id !== note.id) return;
+              active.x = event.clientX - active.dx;
+              active.y = event.clientY - active.dy;
+              const hint = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+              setDropHint((current) => (current === hint ? current : hint));
+              setDragTick((tick) => tick + 1);
+            }}
+            onPointerUp={(event) => {
+              const active = drag.current;
+              if (!active || active.id !== note.id) return;
+              const pin = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+              const left = Math.round(active.x);
+              const top = Math.round(active.y);
+              drag.current = null;
+              setDragging("");
+              setDropHint("");
+              if (pin) {
+                const target = pin.startsWith("lot:") ? `todo:${pin.slice(4)}` : pin;
+                rememberPin(note.id, note.text, note.color, target);
+                setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, kind: "pin", pin: target, x: undefined, y: undefined } : item)));
+                setOpenPin(note.id);
+                return;
+              }
+              setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, x: left, y: top } : item)));
+            }}
+          >
+            <button type="button" aria-label="Remove sticky" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
+            <p>{note.text}</p>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+const BILLS_KEY = "magnolia-park-bills";
+const BILL_ROWS = [
+  { id: "taxes", name: "Taxes" },
+  { id: "electric", name: "Electric" },
+  { id: "power", name: "Power" },
+  { id: "water", name: "Water" },
+  { id: "garbage", name: "Garbage" },
+  { id: "utilities", name: "Pay utilities" },
+  { id: "cards", name: "Credit cards" },
+  { id: "wiring", name: "Wiring insurance" },
+] as const;
+
+type ParkBill = { id: string; name: string; amount: string; due: string };
+
+function moneyNumber(value: string) {
+  const n = Number(String(value).replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function billTone(days: number | null) {
+  if (days === null) return "";
+  if (days > 15) return "bill-green";
+  if (days > 0) return "bill-orange";
+  return "bill-red";
+}
+
+function billDueLabel(days: number | null) {
+  if (days === null) return "Set a due date";
+  if (days > 1) return `Due in ${days} days`;
+  if (days === 1) return "Due in 1 day";
+  if (days === 0) return "Due today";
+  return `${Math.abs(days)} days past due`;
+}
+
+function BillsBoard({ onChange, children }: { onChange?: (bills: ParkBill[]) => void; children?: ReactNode }) {
+  const [bills, setBills] = useState<ParkBill[]>(() => BILL_ROWS.map((row) => ({ ...row, amount: "", due: "" })));
+  const [ready, setReady] = useState(false);
+  const edited = useRef(false);
+
+  useEffect(() => {
+    let cancel = false;
+    void readMaster()
+      .then((book) => {
+        if (cancel || edited.current) return;
+        const saved = Array.isArray(book?.bills) ? (book.bills as Partial<ParkBill>[]) : null;
+        const local = (() => {
+          try {
+            return JSON.parse(localStorage.getItem(BILLS_KEY) ?? "[]") as Partial<ParkBill>[];
+          } catch {
+            return [];
+          }
+        })();
+        const source = saved?.some((item) => item.amount || item.due) ? saved : local;
+        if (source.length) {
+          setBills(
+            BILL_ROWS.map((row) => {
+              const found = source.find((item) => item.id === row.id);
+              return { ...row, amount: found?.amount ?? "", due: found?.due ?? "" };
+            }),
+          );
+        }
+      })
+      .catch(() => {
+        /* the blank rows stay editable */
+      })
+      .finally(() => {
+        if (!cancel) setReady(true);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem(BILLS_KEY, JSON.stringify(bills));
+    } catch {
+      /* the numbers stay on screen */
+    }
+    const timer = window.setTimeout(() => {
+      onChange?.(bills);
+      void saveBills({ data: { bills } }).catch(() => {
+        /* the browser copy is still there */
+      });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [bills, ready, onChange]);
+
+  function update(id: string, patch: Partial<ParkBill>) {
+    edited.current = true;
+    setBills((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  return (
+    <div className="bills-board">
+      {children}
+      <div className="bill-list">
+        {bills.map((bill) => {
+          const days = businessDays(bill.due);
+          const tone = billTone(days);
+          return (
+            <article className={"bill-row " + tone} key={bill.id}>
+              <h3>{bill.name}</h3>
+              <label>
+                Amount
+                <input
+                  inputMode="decimal"
+                  value={bill.amount}
+                  placeholder="0"
+                  onChange={(event) => update(bill.id, { amount: event.target.value })}
+                />
+              </label>
+              <label>
+                Due date
+                <input type="date" value={bill.due} onChange={(event) => update(bill.id, { due: event.target.value })} />
+              </label>
+              <p className={"bill-days " + tone}>{billDueLabel(days)}</p>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+type CalendarItem = { date: string; title: string; kind: "due" | "follow" | "bill" };
+
+function calendarStamp(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function calendarDays(cursor: Date) {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(1 - first.getDay());
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return day;
+  });
+}
+
+function icsText(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+
+function nextDate(stamp: string) {
+  const day = new Date(stamp + "T00:00:00");
+  day.setDate(day.getDate() + 1);
+  return calendarStamp(day).replace(/-/g, "");
+}
+
+function BusinessCalendar({ tasks, bills, mini = false, dropDate = "", pins = [], openPin = "", onPin }: { tasks: BusinessTask[]; bills: ParkBill[]; mini?: boolean; dropDate?: string; pins?: BoardNote[]; openPin?: string; onPin?: (id: string) => void }) {
+  const [cursor, setCursor] = useState(() => new Date());
+  const [note, setNote] = useState("");
+  const items = useMemo(() => {
+    const rows: CalendarItem[] = [];
+    for (const task of tasks) {
+      if (task.status === "Completed") continue;
+      if (task.dueDate) rows.push({ date: task.dueDate, title: task.title || "Task due", kind: "due" });
+      if (task.followUp) rows.push({ date: task.followUp, title: `${task.title || "Task"} follow-up`, kind: "follow" });
+    }
+    for (const bill of bills) {
+      if (bill.due) rows.push({ date: bill.due, title: `${bill.name} bill`, kind: "bill" });
+    }
+    return rows;
+  }, [tasks, bills]);
+  const days = calendarDays(cursor);
+  const today = calendarStamp(new Date());
+  const monthLabel = cursor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  function syncGoogle() {
+    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Magnolia Estates//Business Center//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"];
+    items.forEach((item, index) => {
+      const start = item.date.replace(/-/g, "");
+      lines.push("BEGIN:VEVENT", `UID:magnolia-${item.kind}-${start}-${index}@magnolia`, `DTSTART;VALUE=DATE:${start}`, `DTEND;VALUE=DATE:${nextDate(item.date)}`, `SUMMARY:${icsText(item.title)}`, "END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const url = URL.createObjectURL(new Blob([lines.join("\r\n")], { type: "text/calendar" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "magnolia-business.ics";
+    link.click();
+    URL.revokeObjectURL(url);
+    window.open("https://calendar.google.com/calendar/u/0/r/settings/export", "_blank", "noopener,noreferrer");
+    setNote(items.length ? `Downloaded ${items.length} date${items.length === 1 ? "" : "s"}. In the Google Calendar tab, choose Import and pick magnolia-business.ics.` : "Add a due date first, then sync.");
+  }
+
+  return (
+    <section className={mini ? "park-calendar is-mini" : "park-calendar"}>
+      <div className="park-calendar-head">
+        <div>
+          {mini ? null : <p className="eyebrow">CALENDAR</p>}
+          <h3>{monthLabel}</h3>
+        </div>
+        <div className="park-calendar-actions">
+          <button type="button" className="business-secondary" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} aria-label="Previous month">‹</button>
+          <button type="button" className="business-secondary" onClick={() => setCursor(new Date())}>Today</button>
+          <button type="button" className="business-secondary" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} aria-label="Next month">›</button>
+          {mini ? null : <button type="button" className="business-primary" onClick={syncGoogle}>Sync Google Calendar</button>}
+        </div>
+      </div>
+      {note ? <p className="park-calendar-note">{note}</p> : null}
+      <div className="park-calendar-week">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div>
+      <div className="park-calendar-grid">
+        {days.map((day) => {
+          const stamp = calendarStamp(day);
+          const here = items.filter((item) => item.date === stamp);
+          const outside = day.getMonth() !== cursor.getMonth();
+          return (
+            <div data-date={stamp} className={"park-day" + (outside ? " is-outside" : "") + (stamp === today ? " is-today" : "") + (dropDate === stamp ? " drop-ready" : "")} key={stamp + (outside ? "-x" : "")}>
+              <strong>{day.getDate()}</strong>
+              {pins.filter((note) => note.pin === `date:${stamp}`).map((note) => (
+                <span className="pin-wrap" key={note.id}>
+                  <button type="button" className="pin-mark" style={{ background: note.color || "#ffe56a" }} aria-label="Open sticky note" onClick={() => onPin?.(openPin === note.id ? "" : note.id)} />
+                  {openPin === note.id ? <span className="pin-pop" role="note">{note.text}</span> : null}
+                </span>
+              ))}
+              {here.slice(0, mini ? 1 : 3).map((item) => <em className={"cal-" + item.kind} key={item.kind + item.title}>{item.title}</em>)}
+              {here.length > (mini ? 1 : 3) ? <em className="cal-more">+{here.length - (mini ? 1 : 3)}</em> : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function Home() {
@@ -835,9 +1643,9 @@ function Home() {
   const [sheet, setSheet] = useState<SheetId>(1);
   const [main, setMain] = useState(true);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<LotFilter>("all");
+  const [filter, setFilter] = useState<LotFilter[]>([]);
   const [selected, setSelected] = useState<string | null>("1");
-  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat" | "business">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
+  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat" | "business" | "meeting">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
   const [registerMode, setRegisterMode] = useState<"short" | "full" | "homes">("short");
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
@@ -973,16 +1781,16 @@ function Home() {
   }
 
   const visible = useMemo(() => {
-    return lots.filter((lot) => matchesFilter(lot, filter) && matches(lot, query));
+    return lots.filter((lot) => (filter.length === 0 || filter.some((item) => matchesFilter(lot, item))) && matches(lot, query));
   }, [lots, filter, query]);
 
-  const sig = `${filter}|${query}`;
+  const sig = `${filter.join(",")}|${query}`;
   const prevSig = useRef(sig);
 
   useEffect(() => {
     if (prevSig.current === sig) return;
     prevSig.current = sig;
-    if (!query.trim() && filter === "all") return;
+    if (!query.trim() && filter.length === 0) return;
     if (visible.length === 0) return;
     setMatchAt(0);
     const target = visible[0];
@@ -1032,9 +1840,8 @@ function Home() {
   const empty = useMemo(() => lots.reduce((n, item) => n + (item.status === "Empty" ? 1 : 0), 0), [lots]);
   const notes = useMemo(() => lots.reduce((n, item) => n + (item.issues.trim() ? 1 : 0), 0), [lots]);
   const mapLabel = main ? "Main" : SHEET_COPY[sheet].title;
-  const filterLabel = (
+  const filterNames = (
     [
-      ["all", "All"],
       ["empty", "Empty"],
       ["occupied", "Occupied"],
       ["issues", "Issues"],
@@ -1048,8 +1855,9 @@ function Home() {
       ["wiring", "Wiring"],
       ["lease-ending", "Lease ending"],
     ] as const
-  ).find(([id]) => id === filter)?.[1] ?? "All";
-  const narrowed = query.trim() !== "" || filter !== "all";
+  );
+  const filterLabel = filter.length === 0 ? "" : filter.length === 1 ? filterNames.find(([id]) => id === filter[0])?.[1] ?? "" : `${filter.length} on`;
+  const narrowed = query.trim() !== "" || filter.length > 0;
 
   useEffect(() => {
     if (!mapsOpen && !filtersOpen && !dataOpen) return;
@@ -1235,7 +2043,7 @@ function Home() {
               type="button"
               role="tab"
               aria-expanded={filtersOpen}
-              aria-pressed={filtersOpen || filter !== "all"}
+              aria-pressed={filtersOpen || filter.length > 0}
               onClick={() => {
                 setMapsOpen(false);
                 if (view !== "map") {
@@ -1244,49 +2052,31 @@ function Home() {
                 } else setFiltersOpen((open) => !open);
               }}
             >
-              {filter === "all" ? "Filters ▾" : `Filters · ${filterLabel} ▾`}
+              {filter.length === 0 ? "Filters ▾" : `Filters · ${filterLabel} ▾`}
             </button>
             {filtersOpen ? (
-              <div className="map-drop" role="menu">
-                {(
-                  [
-                    ["all", "All"],
-                    ["empty", "Empty"],
-                    ["occupied", "Occupied"],
-                    ["issues", "Issues"],
-                    ["renters", "Renters"],
-                    ["owners", "Owners"],
-                    ["no-owe", "NO-OWE"],
-                    ["due", "Due"],
-                    ["past-due", "Past due"],
-                    ["roof", "Needs roof"],
-                    ["pets", "Pets"],
-                    ["wiring", "Wiring"],
-                    ["lease-ending", "Lease ending"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={filter === id}
-                    onClick={() => {
-                      setFilter(id);
-                      setView("map");
-                      setFiltersOpen(false);
-                    }}
-                  >
+              <div className="map-drop filter-checks" role="group" aria-label="Map filters">
+                {filterNames.map(([id, label]) => (
+                  <label key={id}>
+                    <input
+                      type="checkbox"
+                      checked={filter.includes(id)}
+                      onChange={() => {
+                        setFilter((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+                        setView("map");
+                      }}
+                    />
                     {label}
-                  </button>
+                  </label>
                 ))}
               </div>
             ) : null}
           </div>
           {(
             [
-              ["register", "Register"],
               ["todo", "To-Do"],
               ["mow", "Mow"],
+              ["meeting", "Meeting"],
               ["heat", "Financial"],
               ["business", "Business"],
             ] as const
@@ -1295,12 +2085,15 @@ function Home() {
               {label}
             </button>
           ))}
+          <button className="tab tab-end" type="button" role="tab" aria-pressed={view === "register"} onClick={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("register"); }}>
+            Register
+          </button>
         </div>
         {narrowed ? (
           <div className="active-strip">
             <span>
               Showing {visible.length} of {lots.length}
-              {filter !== "all" ? ` · ${filterLabel}` : ""}
+              {filter.length ? ` · ${filterLabel}` : ""}
               {query.trim() ? ` · “${query.trim()}”` : ""}
             </span>
             {visible.length > 1 ? (
@@ -1320,7 +2113,7 @@ function Home() {
               className="strip-clear"
               type="button"
               onClick={() => {
-                setFilter("all");
+                setFilter([]);
                 setQuery("");
               }}
             >
@@ -1517,7 +2310,9 @@ function Home() {
           ) : view === "heat" ? (
             <HeatBoard lots={lots} scoped={visible} selected={selected} onOpen={openLot} />
           ) : view === "business" ? (
-            <BusinessBoard />
+            <BusinessBoard lots={lots} />
+          ) : view === "meeting" ? (
+            <MeetingBoard lots={lots} onOpen={openLot} onSave={saveLot} />
           ) : view === "register" ? (
             <RegisterTable
               lots={registerMode === "short" ? [...lots].sort(byStreetAddress) : lots}
@@ -2397,6 +3192,13 @@ function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot
             <span>Note</span>
             <textarea rows={4} value={lot.issues} onChange={(e) => save({ issues: e.target.value })} />
           </label>
+          {lot.stickies?.length ? (
+            <div className="lot-stickies">
+              {lot.stickies.map((sticky) => (
+                <p key={sticky.id} style={{ background: sticky.color }}>{sticky.text}</p>
+              ))}
+            </div>
+          ) : null}
           <label className="wiring-field">
             <span>Violations</span>
             <textarea rows={3} value={lot.violations} onChange={(e) => save({ violations: e.target.value })} />
@@ -2714,8 +3516,13 @@ function printMow(lots: Lot[]) {
   setTimeout(go, 500);
 }
 
-function MowBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void }) {
-  const rows = lots
+const MOW_ROUNDS_KEY = "magnolia-mow-rounds";
+
+type MowStop = { id: string; lot: string; address: string; name: string; street: string; mowed: boolean; notes: string };
+type MowRound = { id: string; date: string; stops: MowStop[] };
+
+function mowStops(lots: Lot[]): MowStop[] {
+  return lots
     .filter((lot) => lot.noMow === "Yes")
     .map((lot) => ({
       id: lot.id,
@@ -2723,14 +3530,135 @@ function MowBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void 
       lot: lot.lot,
       address: [lot.address, lot.street].filter(Boolean).join(" "),
       name: displayName(lot),
+      mowed: false,
+      notes: "",
     }));
+}
+
+function mowTone(stop: MowStop, balance: number) {
+  if (balance > 72) return "mow-red";
+  if (stop.notes.trim()) return "mow-yellow";
+  if (stop.mowed) return "mow-green";
+  return "mow-orange";
+}
+
+function asRounds(value: unknown): MowRound[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Partial<MowRound>;
+    if (typeof row.date !== "string" || !Array.isArray(row.stops)) return [];
+    return [{ id: typeof row.id === "string" ? row.id : row.date, date: row.date, stops: row.stops.filter((stop) => stop && typeof stop.id === "string") as MowStop[] }];
+  });
+}
+
+function MowBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void }) {
+  const [rounds, setRounds] = useState<MowRound[]>([]);
+  const [draft, setDraft] = useState<MowRound | null>(null);
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [ready, setReady] = useState(false);
+  const balance = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const lot of lots) map.set(lot.id, moneyNumber(lot.balance ?? ""));
+    return map;
+  }, [lots]);
+
+  useEffect(() => {
+    let cancel = false;
+    void readMaster()
+      .then((book) => {
+        if (cancel) return;
+        const saved = asRounds(book?.mowings);
+        if (saved.length) setRounds(saved);
+        else {
+          try {
+            const local = asRounds(JSON.parse(localStorage.getItem(MOW_ROUNDS_KEY) ?? "[]"));
+            if (local.length) setRounds(local);
+          } catch {
+            /* start with no saved mowings */
+          }
+        }
+      })
+      .catch(() => {
+        /* the list still works */
+      })
+      .finally(() => {
+        if (!cancel) setReady(true);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !rounds.length) return;
+    try {
+      localStorage.setItem(MOW_ROUNDS_KEY, JSON.stringify(rounds));
+    } catch {
+      /* the round stays on screen */
+    }
+    void saveMowings({ data: { mowings: rounds } }).catch(() => {
+      /* the browser copy is still there */
+    });
+  }, [rounds, ready]);
+
+  const viewing = cursor === null ? draft : rounds[cursor] ?? null;
+  const editing = cursor === null && draft !== null;
+  const rows = viewing?.stops ?? mowStops(lots);
   const groups = groupTodos(rows);
+  const canLeft = (cursor === null && rounds.length > 0) || (cursor !== null && cursor < rounds.length - 1);
+  const canRight = cursor !== null && cursor > 0;
+
+  function startMowing() {
+    if (draft) {
+      setCursor(null);
+      return;
+    }
+    const today = new Date();
+    const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    setDraft({ id: `mow-${Date.now()}`, date, stops: mowStops(lots) });
+    setCursor(null);
+  }
+
+  function patchStop(id: string, patch: Partial<MowStop>) {
+    setDraft((current) => (current ? { ...current, stops: current.stops.map((stop) => (stop.id === id ? { ...stop, ...patch } : stop)) } : current));
+  }
+
+  function submitMowing() {
+    if (!draft?.date) return;
+    setRounds((current) => [draft, ...current]);
+    setDraft(null);
+    setCursor(0);
+  }
+
   return (
     <div className="todo">
       <div className="todo-head">
         <h2>Yes mow</h2>
+        {canLeft || canRight ? (
+          <div className="mow-nav">
+            {canLeft ? <button type="button" className="print-map" aria-label="Older mowing" onClick={() => setCursor(cursor === null ? 0 : cursor + 1)}>‹</button> : null}
+            {canRight ? <button type="button" className="print-map" aria-label="Newer mowing" onClick={() => setCursor((cursor ?? 0) - 1)}>›</button> : null}
+          </div>
+        ) : null}
+        {editing ? (
+          <label className="mow-date">
+            Mowing date
+            <input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} />
+          </label>
+        ) : viewing ? (
+          <p className="mow-label">{viewing.date}</p>
+        ) : null}
         <button className="print-map" type="button" onClick={() => printMow(lots)}>
           Print
+        </button>
+        {editing ? (
+          <button className="print-map" type="button" disabled={!draft.date} onClick={submitMowing}>
+            Submit
+          </button>
+        ) : null}
+        <button className="print-map mow-new" type="button" onClick={startMowing}>
+          New Mowing
         </button>
       </div>
       {rows.length === 0 ? (
@@ -2740,15 +3668,27 @@ function MowBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void 
           <section key={street}>
             <h3>{street}</h3>
             <ul className="mow-list">
-              {group.items.map((item) => (
-                <li key={item.id}>
-                  <button className="todo-card" type="button" onClick={() => onOpen(item.id)}>
-                    <span><b>Lot</b> {item.lot || "—"}</span>
-                    <span><b>Address</b> {item.address || "—"}</span>
-                    <span><b>Name</b> {item.name || "—"}</span>
-                  </button>
-                </li>
-              ))}
+              {group.items.map((item) => {
+                const tone = viewing ? mowTone(item, balance.get(item.id) ?? 0) : "";
+                return (
+                  <li key={item.id} className={editing || viewing ? "mow-active" : ""}>
+                    <button className={"todo-card " + tone} type="button" onClick={() => onOpen(item.id)}>
+                      <span><b>Lot</b> {item.lot || "—"}</span>
+                      <span><b>Address</b> {item.address || "—"}</span>
+                      <span><b>Name</b> {item.name || "—"}</span>
+                    </button>
+                    {viewing ? (
+                      <div className="mow-side">
+                        <label>
+                          <input type="checkbox" checked={item.mowed} disabled={!editing} onChange={(event) => patchStop(item.id, { mowed: event.target.checked })} />
+                          Mowed
+                        </label>
+                        <input aria-label={"Notes for " + (item.name || item.lot)} value={item.notes} placeholder="Notes" readOnly={!editing} onChange={(event) => patchStop(item.id, { notes: event.target.value })} />
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))
@@ -2765,6 +3705,34 @@ function streetGroup(street: string) {
   if (name.includes("michelle")) return { rank: 3, label: "Michelle" };
   if (name.includes("kirkwood")) return { rank: 4, label: "Kirkwood" };
   return { rank: 5, label: street.trim() || "Other" };
+}
+
+const NOTE_BANDS = [
+  { label: "Rent, short, or owe", words: ["rent", "short", "owe"] },
+  { label: "Check, bounced, or missing", words: ["check", "bounced", "missing"] },
+  { label: "Title or guest", words: ["title", "guest"] },
+  { label: "Dog, cat, or pet", words: ["dog", "cat", "pet"] },
+] as const;
+
+function noteBand(notes: string) {
+  const hay = notes.toLowerCase();
+  const hit = NOTE_BANDS.find((band) => band.words.some((word) => new RegExp(`\\b${word}`, "i").test(hay)));
+  return hit?.label ?? "Other";
+}
+
+function noteBands<T extends { notes: string }>(items: T[]) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const label = noteBand(item.notes);
+    const current = groups.get(label);
+    if (current) current.push(item);
+    else groups.set(label, [item]);
+  }
+  const order = [...NOTE_BANDS.map((band) => band.label), "Other"];
+  return order.flatMap((label) => {
+    const group = groups.get(label);
+    return group?.length ? [[label, group] as const] : [];
+  });
 }
 
 function groupTodos<T extends { street: string }>(items: T[]) {
@@ -2813,10 +3781,10 @@ function TodoBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void
     if (!checking) return;
     const current = items.find((item) => item.id === id);
     if (!current) return;
-    const label = streetGroup(current.street).label;
-    const streetItems = items.filter((item) => streetGroup(item.street).label === label);
-    const index = streetItems.findIndex((item) => item.id === id);
-    const follow = [...streetItems.slice(index + 1), ...streetItems.slice(0, index)].find((item) => !next.has(item.id));
+    const label = noteBand(current.notes);
+    const bandItems = items.filter((item) => noteBand(item.notes) === label);
+    const index = bandItems.findIndex((item) => item.id === id);
+    const follow = [...bandItems.slice(index + 1), ...bandItems.slice(0, index)].find((item) => !next.has(item.id));
     if (follow) onOpen(follow.id);
   }
   function shift(id: string, dir: -1 | 1, list: { id: string }[]) {
@@ -2845,7 +3813,7 @@ function TodoBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void
   return (
     <div className="todo">
       <div className="todo-head">
-        <h2>Soonest first</h2>
+        <h2>By notes</h2>
         <div className="seg">
           <button className="filter" type="button" aria-pressed={todoFilter === "open"} onClick={() => setTodoFilter("open")}>
             Open{openItems.length ? ` ${openItems.length}` : ""}
@@ -2861,10 +3829,10 @@ function TodoBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void
       {shown.length === 0 ? (
         <p className="todo-empty">{todoFilter === "done" ? "Nothing checked off." : "Nothing open."}</p>
       ) : (
-        groupTodos(shown).map(([street, group]) => (
-          <section key={street}>
-            <h3>{street}</h3>
-            <TodoList items={group.items} done={done} onToggle={toggle} onShift={(id, dir) => shift(id, dir, group.items)} onOpen={onOpen} empty="" />
+        noteBands(shown).map(([label, group]) => (
+          <section key={label}>
+            <h3>{label}</h3>
+            <TodoList items={group} done={done} onToggle={toggle} onShift={(id, dir) => shift(id, dir, group)} onOpen={onOpen} empty="" />
           </section>
         ))
       )}
@@ -3112,9 +4080,11 @@ const HEAT_METRICS = [
 
 type HeatMetric = (typeof HEAT_METRICS)[number][0];
 
-function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lot[]; selected: string | null; onOpen: (id: string) => void }) {
+function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot[]; scoped: Lot[]; selected: string | null; onOpen: (id: string) => void; mini?: boolean }) {
   const [metric, setMetric] = useState<HeatMetric>("overall");
-  const homes = lots.filter((lot) => lot.status !== "Open" && lot.status !== "Empty");
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const homes = lots.filter((lot) => lot.status !== "Open");
   const insuredHomes = homes.filter((lot) => lot.homeIns === "Yes");
   const poolDefaults = {
     insurance: "7000",
@@ -3128,6 +4098,7 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
     utilities: "0",
     other: "0",
   };
+  const [poolsOpen, setPoolsOpen] = useState(false);
   const [expensePools, setExpensePools] = useState<Record<keyof typeof poolDefaults, string>>(() => {
     try {
       const saved = typeof window !== "undefined" ? localStorage.getItem("magnolia-financial-expense-pools") : null;
@@ -3178,9 +4149,9 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
   const worseHigh = metric === "monthExpense" || metric === "yearExpense" || metric === "owed";
   const scored = homes
     .flatMap((lot) => {
-      const rent = parseMoney(lot.rent) ?? 0;
+      const rent = lot.status === "Empty" ? 0 : (parseMoney(lot.rent) ?? 0);
       const expense = monthlyExpense(lot);
-      const profit = rent - expense;
+      const profit = rent - expense - (lot.status === "Empty" ? 540 : 0);
       const ratio = rent > 0 ? (profit / rent) * 100 : profit < 0 ? -100 : null;
       const pets = (lot.dogs === "1" || lot.dogs === "2" ? Number(lot.dogs) : 0) + (lot.cats === "1" || lot.cats === "2" ? Number(lot.cats) : 0);
       const violations = (lot.violations ?? "").split(/\n+/).map((line) => line.trim()).filter(Boolean).length;
@@ -3217,10 +4188,11 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
     paint[row.lot.id] = { fill: band.color, ink: heatInk(band.color), value };
   });
   const metricLabel = HEAT_METRICS.find((item) => item[0] === metric)?.[1] ?? "Value";
-  const counted = scoped.filter((lot) => lot.status !== "Open" && lot.status !== "Empty");
-  const rentSum = counted.reduce((sum, lot) => sum + (parseMoney(lot.rent) ?? 0), 0);
+  const counted = scoped.filter((lot) => lot.status !== "Open");
+  const rentSum = counted.reduce((sum, lot) => sum + (lot.status === "Empty" ? 0 : (parseMoney(lot.rent) ?? 0)), 0);
   const expenseSum = counted.reduce((sum, lot) => sum + monthlyExpense(lot), 0);
-  const profitSum = rentSum - expenseSum;
+  const emptyCount = counted.filter((lot) => lot.status === "Empty").length;
+  const profitSum = rentSum - expenseSum - emptyCount * 540;
   const owedSum = counted.reduce((sum, lot) => sum + (parseMoney(lot.balance) ?? 0), 0);
   const metricTotal =
     metric === "roi" ? (rentSum > 0 ? (profitSum / rentSum) * 100 : profitSum < 0 ? -100 : 0)
@@ -3233,6 +4205,15 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
     : metric === "yearRent" ? rentSum * 12
     : owedSum;
   const metricText = metric === "roi" || metric === "overall" ? `${Math.round(metricTotal)}%` : dollar(metricTotal);
+  if (mini) {
+    return (
+      <div className="mini-heat">
+        {([1, 2, 3] as const).map((id) => (
+          <PlatMap key={id} sheet={id} query="" filter="all" selected={selected} lots={lots} heat={paint} onSelect={onOpen} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="todo heat-board">
       <div className="financial-window-actions">
@@ -3240,39 +4221,56 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
           Open financial dashboard in new window ↗
         </button>
       </div>
-      <section className="expense-pools" aria-label="Annual expense assumptions">
-        <div className="expense-pools-head">
+      <section className={poolsOpen ? "expense-pools" : "expense-pools is-collapsed"} aria-label="Annual expense assumptions">
+        <button type="button" className="expense-pools-head" aria-expanded={poolsOpen} onClick={() => setPoolsOpen((open) => !open)}>
           <div>
             <h3>Annual expense assumptions</h3>
-            <p>Adjust these community-wide costs to match actual bills. Values are saved in this browser.</p>
+            {poolsOpen ? <p>Adjust these community-wide costs to match actual bills. Values are saved in this browser.</p> : null}
           </div>
           <strong>{dollar(annualPoolTotal)} / year</strong>
-        </div>
-        <div className="expense-pool-grid">
-          {poolLabels.map(({ key, label }) => (
-            <label key={key}>
-              <span>{label}</span>
-              <div className="expense-input-wrap">
-                <span>$</span>
-                <input
-                  aria-label={label + " annual shared expense"}
-                  inputMode="decimal"
-                  value={expensePools[key]}
-                  onChange={(event) => updateExpensePool(key, event.target.value)}
-                />
-                <small>/ yr</small>
-              </div>
-            </label>
-          ))}
-        </div>
-        <p className="expense-pools-note">Shared costs are allocated across occupied lots; home insurance is allocated only across occupied lots marked “Home insurance: Yes.” Existing lot-specific cost fields are added on top. Enter each cost in one place only to avoid double-counting.</p>
+          <span className="expense-toggle" aria-hidden="true">{poolsOpen ? "▴" : "▾"}</span>
+        </button>
+        {poolsOpen ? (
+          <>
+            <div className="expense-pool-grid">
+              {poolLabels.map(({ key, label }) => (
+                <label key={key}>
+                  <span>{label}</span>
+                  <div className="expense-input-wrap">
+                    <span>$</span>
+                    <input
+                      aria-label={label + " annual shared expense"}
+                      inputMode="decimal"
+                      value={expensePools[key]}
+                      onChange={(event) => updateExpensePool(key, event.target.value)}
+                    />
+                    <small>/ yr</small>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <p className="expense-pools-note">Shared costs are split across occupied and empty lots. A cost typed on a lot in the detail window stays on that lot only. Home insurance is split only across lots marked Home insurance Yes. Wiring insurance is split only across lots marked Yes.</p>
+          </>
+        ) : null}
       </section>
-      <div className="heat-filters">
-        {HEAT_METRICS.map(([id, name]) => (
-          <button key={id} className="filter" type="button" aria-pressed={metric === id} onClick={() => setMetric(id)}>
-            {name}
-          </button>
-        ))}
+      <div className="map-slot heat-metric-drop">
+        <button className="filter" type="button" aria-expanded={metricsOpen} onClick={() => setMetricsOpen((open) => !open)}>
+          {metricLabel} ▾
+        </button>
+        {metricsOpen ? (
+          <div className="map-drop filter-checks" role="group" aria-label="Financial filters">
+            {HEAT_METRICS.map(([id, name]) => (
+              <label key={id}>
+                <input
+                  type="checkbox"
+                  checked={metric === id}
+                  onChange={() => setMetric((current) => (current === id ? "overall" : id))}
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="money-totals">
         <span>{metric === "roi" ? "Profit" : metricLabel} <b>{metricText}</b></span>
@@ -3297,6 +4295,7 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
             <button
               key={row.lot.id}
               type="button"
+              data-lot-id={row.lot.id}
               title={`Rank ${index + 1}: Lot ${row.lot.lot} · ${label(row.amount)}`}
               style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}
               onClick={() => onOpen(row.lot.id)}
@@ -3315,7 +4314,28 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
           </section>
         ))}
       </div>
-      <h3>Best to worst · {metricLabel}</h3>
+      <div className="heat-list-head">
+        <h3>Best to worst · {metricLabel}</h3>
+        <div className="map-slot heat-metric-drop">
+          <button className="filter" type="button" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}>
+            {metricLabel} ▾
+          </button>
+          {listOpen ? (
+            <div className="map-drop filter-checks" role="group" aria-label="Best to worst filters">
+              {HEAT_METRICS.map(([id, name]) => (
+                <label key={id}>
+                  <input
+                    type="checkbox"
+                    checked={metric === id}
+                    onChange={() => setMetric((current) => (current === id ? "overall" : id))}
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
       {scored.length === 0 ? (
         <p className="todo-empty">Nothing to color for this filter.</p>
       ) : (
@@ -3330,19 +4350,22 @@ function HeatBoard({ lots, scoped, selected, onOpen }: { lots: Lot[]; scoped: Lo
             </tr>
           </thead>
           <tbody>
-            {scored.map((row, index) => (
-              <tr key={row.lot.id}>
-                <td>{index + 1}</td>
-                <td>
-                  <button type="button" onClick={() => onOpen(row.lot.id)}>
-                    {row.lot.lot}
-                  </button>
-                </td>
-                <td>{[row.lot.address, row.lot.street].filter(Boolean).join(" ")}</td>
-                <td>{displayName(row.lot) || "—"}</td>
-                <td>{label(row.amount)}</td>
-              </tr>
-            ))}
+            {scored.map((row, index) => {
+              const color = paint[row.lot.id];
+              return (
+                <tr key={row.lot.id} className="heat-rank-lot" style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}>
+                  <td>{index + 1}</td>
+                  <td>
+                    <button type="button" onClick={() => onOpen(row.lot.id)}>
+                      {row.lot.lot}
+                    </button>
+                  </td>
+                  <td>{[row.lot.address, row.lot.street].filter(Boolean).join(" ")}</td>
+                  <td>{displayName(row.lot) || "—"}</td>
+                  <td>{label(row.amount)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

@@ -5,6 +5,9 @@ export type SerializableValue = string | number | boolean | null | SerializableV
 export type MasterBook = {
   saved: string;
   lots: SerializableValue[];
+  bills?: SerializableValue[];
+  mowings?: SerializableValue[];
+  board?: SerializableValue[];
 };
 
 const FILE = "data/magnolia-master.json";
@@ -16,7 +19,7 @@ async function archiveBook(book: MasterBook) {
   const saved = book.saved || new Date().toISOString();
   const id = `magnolia-${saved.replace(/[:.]/g, "-")}.json`;
   await mkdir(join(process.cwd(), ARCHIVE), { recursive: true });
-  await writeFile(join(process.cwd(), ARCHIVE, id), `${JSON.stringify({ saved, lots: book.lots })}\n`);
+  await writeFile(join(process.cwd(), ARCHIVE, id), `${JSON.stringify({ saved, lots: book.lots, bills: book.bills, mowings: book.mowings, board: book.board })}\n`);
   return id;
 }
 
@@ -65,7 +68,20 @@ export const restoreVersion = createServerFn({ method: "POST" })
     }
     const saved = new Date().toISOString();
     await mkdir(join(process.cwd(), "data"), { recursive: true });
-    await writeFile(file, `${JSON.stringify({ saved, lots: archived.lots })}\n`);
+    let bills = archived.bills;
+    let mowings = archived.mowings;
+    let board = archived.board;
+    if (!bills || !mowings || !board) {
+      try {
+        const live = JSON.parse(await readFile(file, "utf8")) as MasterBook;
+        if (!bills && Array.isArray(live.bills)) bills = live.bills;
+        if (!mowings && Array.isArray(live.mowings)) mowings = live.mowings;
+        if (!board && Array.isArray(live.board)) board = live.board;
+      } catch {
+        /* no live extras to keep */
+      }
+    }
+    await writeFile(file, `${JSON.stringify({ saved, lots: archived.lots, bills, mowings, board })}\n`);
     return { saved, lots: archived.lots, count: archived.lots.length };
   });
 
@@ -88,6 +104,9 @@ export const writeMaster = createServerFn({ method: "POST" })
     return {
       saved: typeof data.saved === "string" ? data.saved : new Date().toISOString(),
       lots: data.lots,
+      bills: Array.isArray(data.bills) ? data.bills : undefined,
+      mowings: Array.isArray(data.mowings) ? data.mowings : undefined,
+      board: Array.isArray(data.board) ? data.board : undefined,
     };
   })
   .handler(async ({ data }) => {
@@ -114,11 +133,11 @@ export const writeMaster = createServerFn({ method: "POST" })
           const id = String((lot as { id?: string }).id);
           if (!seen.has(id)) merged.push(lot);
         }
-        if (JSON.stringify(current.lots) === JSON.stringify(merged)) {
+        if (JSON.stringify(current.lots) === JSON.stringify(merged) && JSON.stringify(current.bills ?? null) === JSON.stringify(data.bills ?? current.bills ?? null) && JSON.stringify(current.mowings ?? null) === JSON.stringify(data.mowings ?? current.mowings ?? null) && JSON.stringify(current.board ?? null) === JSON.stringify(data.board ?? current.board ?? null)) {
           return { ok: true as const, count: merged.length };
         }
         await archiveBook(current);
-        await writeFile(file, `${JSON.stringify({ saved: data.saved, lots: merged })}\n`);
+        await writeFile(file, `${JSON.stringify({ saved: data.saved, lots: merged, bills: data.bills ?? current.bills, mowings: data.mowings ?? current.mowings, board: data.board ?? current.board })}\n`);
         return { ok: true as const, count: merged.length };
       }
       if (JSON.stringify(current.lots) === lotsBody) {
@@ -127,6 +146,75 @@ export const writeMaster = createServerFn({ method: "POST" })
     } catch {
       /* the file is created below */
     }
-    await writeFile(file, `${JSON.stringify({ saved: data.saved, lots: data.lots })}\n`);
+    await writeFile(file, `${JSON.stringify({ saved: data.saved, lots: data.lots, bills: data.bills, mowings: data.mowings, board: data.board })}\n`);
     return { ok: true as const, count: data.lots.length };
+  });
+
+export const saveBills = createServerFn({ method: "POST" })
+  .validator((data: { bills: SerializableValue[] }) => {
+    if (!data || !Array.isArray(data.bills)) throw new Error("Bills need a list");
+    return { bills: data.bills };
+  })
+  .handler(async ({ data }) => {
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const { dirname, join } = await import("node:path");
+    const file = join(process.cwd(), FILE);
+    await mkdir(dirname(file), { recursive: true });
+    let book: MasterBook = { saved: new Date().toISOString(), lots: [] };
+    try {
+      const current = JSON.parse(await readFile(file, "utf8")) as MasterBook;
+      if (current && Array.isArray(current.lots)) book = current;
+    } catch {
+      /* a new register is created with the bills */
+    }
+    if (JSON.stringify(book.bills ?? null) === JSON.stringify(data.bills)) return { ok: true as const };
+    book = { ...book, saved: new Date().toISOString(), bills: data.bills };
+    await writeFile(file, `${JSON.stringify(book)}\n`);
+    return { ok: true as const };
+  });
+
+export const saveMowings = createServerFn({ method: "POST" })
+  .validator((data: { mowings: SerializableValue[] }) => {
+    if (!data || !Array.isArray(data.mowings)) throw new Error("Mowings need a list");
+    return { mowings: data.mowings };
+  })
+  .handler(async ({ data }) => {
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const { dirname, join } = await import("node:path");
+    const file = join(process.cwd(), FILE);
+    await mkdir(dirname(file), { recursive: true });
+    let book: MasterBook = { saved: new Date().toISOString(), lots: [] };
+    try {
+      const current = JSON.parse(await readFile(file, "utf8")) as MasterBook;
+      if (current && Array.isArray(current.lots)) book = current;
+    } catch {
+      /* a new register is created with the mowings */
+    }
+    if (JSON.stringify(book.mowings ?? null) === JSON.stringify(data.mowings)) return { ok: true as const };
+    book = { ...book, saved: new Date().toISOString(), mowings: data.mowings };
+    await writeFile(file, `${JSON.stringify(book)}\n`);
+    return { ok: true as const };
+  });
+
+export const saveBoard = createServerFn({ method: "POST" })
+  .validator((data: { board: SerializableValue[] }) => {
+    if (!data || !Array.isArray(data.board)) throw new Error("Board needs a list");
+    return { board: data.board };
+  })
+  .handler(async ({ data }) => {
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    const { dirname, join } = await import("node:path");
+    const file = join(process.cwd(), FILE);
+    await mkdir(dirname(file), { recursive: true });
+    let book: MasterBook = { saved: new Date().toISOString(), lots: [] };
+    try {
+      const current = JSON.parse(await readFile(file, "utf8")) as MasterBook;
+      if (current && Array.isArray(current.lots)) book = current;
+    } catch {
+      /* a new register is created with the board */
+    }
+    if (JSON.stringify(book.board ?? null) === JSON.stringify(data.board)) return { ok: true as const };
+    book = { ...book, saved: new Date().toISOString(), board: data.board };
+    await writeFile(file, `${JSON.stringify(book)}\n`);
+    return { ok: true as const };
   });

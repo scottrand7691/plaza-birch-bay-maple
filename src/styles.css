@@ -123,6 +123,20 @@ h1 {
 
 .tab-end { margin-left: auto; }
 .map-slot { position: relative; }
+.map-attach {
+  display: inline-flex;
+  align-items: stretch;
+}
+.map-attach .tab {
+  border-radius: 0;
+}
+.map-attach .map-slot:first-child .tab {
+  border-radius: 999px 0 0 999px;
+  border-right: 0;
+}
+.map-attach .map-slot:last-child .tab {
+  border-radius: 0 999px 999px 0;
+}
 .filter-checks { display: grid; gap: 2px; min-width: 190px; padding: 8px; }
 .filter-checks label {
   display: flex;
@@ -373,6 +387,7 @@ h1 {
   min-height: 0;
   grid-template-rows: minmax(0, 1fr);
 }
+.stage.stage-full { grid-template-columns: minmax(0, 1fr); }
 
 .map-frame {
   position: relative;
@@ -2734,6 +2749,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   font: inherit;
   cursor: pointer;
 }
+.mini-list .pin-mark,
+.mini-list .pin-pop button {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+}
 .mini-list small, .mini-list b { display: block; }
 .mini-list small {
   color: var(--color-muted);
@@ -3160,6 +3182,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 @media (min-width: 901px) {
   .stage:not(:has(.business-board)) { grid-template-columns: minmax(0, 1fr) minmax(320px, 360px); }
+  .stage.stage-full { grid-template-columns: minmax(0, 1fr); }
   .stage:has(.business-board) .map-scroll { overflow: auto; }
 }
 @media (max-width: 900px) {

@@ -1284,13 +1284,26 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
           <h3>Business tasks</h3>
           {business.length === 0 ? <p>No open tasks.</p> : (
             <ul>
-              {business.map((task) => (
+              {business.map((task) => {
+                const lotId = task.id.startsWith("lot-note:") ? task.id.slice("lot-note:".length) : "";
+                const fromLot = (lots.find((lot) => lot.id === lotId)?.stickies ?? []).map((sticky) => ({ id: sticky.id, kind: "pin" as const, text: sticky.text, when: "", color: sticky.color, pin: `task:${task.id}` }));
+                const fromSaved = (loadTaskStickies()[task.id] ?? []).filter((sticky) => !notes.some((item) => item.id === sticky.id)).map((sticky) => ({ id: sticky.id, kind: "pin" as const, text: sticky.text, when: "", color: sticky.color, pin: `task:${task.id}` }));
+                const pinned = [...notes, ...fromLot, ...fromSaved].filter((note) => note.kind === "pin" && note.pin === `task:${task.id}`);
+                const seen = new Set<string>();
+                const shown = pinned.filter((note) => {
+                  const key = note.text.trim().toLowerCase();
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+                return (
                 <li key={task.id} data-task-id={task.id} className={dropHint === `task:${task.id}` ? "drop-ready" : ""}>
                   <b>{task.title}</b>
                   <small>{task.category}{task.dueDate ? ` · ${task.dueDate}` : ""}</small>
-                  <PinMarks notes={[...notes, ...(loadTaskStickies()[task.id] ?? []).filter((sticky) => !notes.some((item) => item.id === sticky.id)).map((sticky) => ({ id: sticky.id, kind: "pin" as const, text: sticky.text, when: "", color: sticky.color, pin: `task:${task.id}` }))]} pin={`task:${task.id}`} open={openPin} onOpen={setOpenPin} onRemove={forgetPin} />
+                  <PinMarks notes={shown} pin={`task:${task.id}`} open={openPin} onOpen={setOpenPin} onRemove={forgetPin} />
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </section>
@@ -1988,6 +2001,7 @@ function Home() {
       </header>
       <div className="toolbar">
         <div className="tabs" role="tablist" aria-label="Sections">
+          <div className="map-attach">
           <div className="map-slot">
             <button
               className="tab"
@@ -2072,13 +2086,14 @@ function Home() {
               </div>
             ) : null}
           </div>
+          </div>
           {(
             [
               ["todo", "To-Do"],
               ["mow", "Mow"],
               ["meeting", "Meeting"],
-              ["heat", "Financial"],
               ["business", "Business"],
+              ["heat", "Financial"],
             ] as const
           ).map(([id, label]) => (
             <button key={id} className="tab" type="button" role="tab" aria-pressed={view === id} onClick={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView(id); }}>
@@ -2242,7 +2257,7 @@ function Home() {
           }}
         />
       </div>
-      <div className="stage">
+      <div className={view === "meeting" || view === "business" ? "stage stage-full" : "stage"}>
         <section className="map-frame">
           {view === "map" && legendOn ? (
             <div className="legend">
@@ -2395,6 +2410,7 @@ function Home() {
             </>
           ) : null}
         </section>
+        {view === "meeting" || view === "business" ? null : (
         <LotPanel
           lot={lot}
           lots={lots}
@@ -2403,6 +2419,7 @@ function Home() {
           onRentRoll={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("increase"); }}
           onAlert={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("alert"); }}
         />
+        )}
       </div>
     </main>
   );

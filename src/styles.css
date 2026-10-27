@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #e6e0d6;
-  --color-paper: #f6f3ec;
-  --color-ink: #1c1916;
-  --color-muted: #5e584f;
-  --color-line: #2a2622;
-  --color-accent: #1f3d32;
-  --color-accent-soft: #e4ebe6;
-  --color-empty: #efe6d8;
-  --color-hatch: #ddd4c6;
-  --color-chip: #ebe4d8;
+  --color-bg: #f3f5f4;
+  --color-paper: #ffffff;
+  --color-ink: #1c2420;
+  --color-muted: #5d6a62;
+  --color-line: #d5ddd8;
+  --color-accent: #1b6b45;
+  --color-accent-soft: #e7f3ec;
+  --color-empty: #f3f1ea;
+  --color-hatch: #e4e8e5;
+  --color-chip: #eef2ef;
   --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
   --font-serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
-  --radius-sm: 6px;
+  --radius-sm: 8px;
   --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-lg: 14px;
 }
 
 @layer base {
@@ -79,8 +79,32 @@ h1 {
 
 .stats {
   margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.stat-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-paper);
   color: var(--color-muted);
+  font: inherit;
   font-size: 12px;
+  font-weight: 650;
+}
+.stat-chip b {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.stat-chip:hover {
+  border-color: color-mix(in oklab, var(--color-accent) 45%, var(--color-line));
+  background: var(--color-accent-soft);
 }
 
 .search {
@@ -550,7 +574,7 @@ h1 {
 
 .lot rect,
 .lot polygon {
-  fill: var(--color-paper);
+  fill: #f6f3ec;
   stroke: #000;
   stroke-width: 1.9;
 }
@@ -724,6 +748,12 @@ h1 {
   fill: url(#roofStripes);
 }
 
+.lot.is-drop rect,
+.lot.is-drop polygon {
+  stroke: #1b6b45;
+  stroke-width: 4;
+}
+
 .lot.selected rect,
 .lot.selected polygon {
   stroke: #111;
@@ -740,7 +770,7 @@ h1 {
 
 .landmark rect {
   fill: transparent;
-  stroke: var(--color-line);
+  stroke: #24302a;
   stroke-width: 1.5;
 }
 
@@ -1350,6 +1380,7 @@ h1 {
   font-weight: 750;
 }
 
+.heat-filter-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
 .heat-metric-drop { margin: 10px 0; }
 
 .heat-cost {
@@ -2302,8 +2333,17 @@ h1 {
   --ui-focus: 0 0 0 3px rgb(31 61 50 / 18%);
 }
 button, input, select, textarea {
-  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease, transform 150ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
 }
+.tab:active, .filter:active, .stat-chip:active { transform: translateY(1px); }
+.map-drop, .panel {
+  animation: panel-in 200ms ease;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.map-scroll > * { animation: panel-in 180ms ease; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
@@ -2407,6 +2447,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   padding-bottom: 8px;
   border-bottom: 1px solid var(--color-line);
 }
+.bills-title {
+  margin: 18px 0 10px;
+  font-size: 22px;
+}
 .meeting-board {
   position: relative;
   display: flex;
@@ -2437,6 +2481,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   overflow: auto;
 }
 .bulletin-tile {
+  position: relative;
   padding: 12px;
   border: 1px solid #c4ad86;
   border-radius: 12px;
@@ -2634,7 +2679,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 .message-float .meeting-messages { max-height: none; overflow: auto; margin: 0; }
 .message-compose { position: relative; }
-.message-float .message-write { width: 100%; min-height: 52px; border: 1px solid var(--color-line); border-radius: 10px; padding: 8px 28px 8px 10px; font: inherit; resize: vertical; background: #fff; }
+.message-float h3 { margin: 0; font-size: 15px; }
+.message-ink { font-weight: 750; }
+.message-float .meeting-messages li,
+.message-float .message-write { background: #fff; color: var(--color-ink); }
+.message-float .message-write { width: 100%; min-height: 36px; border: 1px solid var(--color-line); border-radius: 8px; padding: 6px 28px 6px 8px; font: inherit; font-size: 13px; resize: vertical; }
 .message-color { top: 8px; right: 8px; }
 .message-colors { top: 28px; right: 6px; }
 .message-empty { margin: 0; color: var(--color-muted); font-size: 13px; }
@@ -2662,7 +2711,19 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   gap: 16px;
 }
 .mini-calendar, .mini-finance { width: 50%; min-width: 0; }
-.mini-finance h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+.mini-finance h3 { margin: 0; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+.mini-map-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.mini-map-switch {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
 .park-calendar.is-mini { margin: 0; padding-bottom: 0; border-bottom: 0; }
 .park-calendar.is-mini h3 { font-size: 22px; }
 .park-calendar.is-mini .park-calendar-head { align-items: center; gap: 8px; }
@@ -2925,7 +2986,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .business-form-title p, .business-list-head p { margin: 5px 0 0; color: var(--color-muted); font-size: 12px; }
 .business-field { display: grid; align-content: start; gap: 6px; min-width: 0; color: var(--color-muted); font-size: 12px; font-weight: 700; }
 .business-field-wide { grid-column: 1 / -1; }
-.business-field input, .business-field select, .business-field textarea, .business-list-head > input, .business-task-actions select {
+.business-field input, .business-field select, .business-field textarea, .business-list-head > input, .business-list-head .business-heading-actions input, .business-task-actions select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -2940,7 +3001,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .business-field textarea { resize: vertical; line-height: 1.5; }
 .business-form-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 4px; }
 .business-list-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 0 0 12px; }
-.business-list-head > input { max-width: 340px; }
+.business-list-head .business-heading-actions { align-items: center; }
+.business-filter-drop .map-drop { left: auto; right: 0; max-height: 320px; overflow: auto; }
+.business-list-head > input, .business-list-head .business-heading-actions input { max-width: 340px; }
 .business-filters { display: flex; flex-wrap: nowrap; gap: 7px; overflow-x: auto; padding: 2px 1px 12px; margin-bottom: 4px; scrollbar-width: thin; }
 .business-filters button {
   flex: 0 0 auto;
@@ -3019,7 +3082,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .business-task-actions .business-due { justify-self: start; }
 }
 @media (prefers-reduced-motion: reduce) {
-  button, input, select, textarea, .business-task, .business-metric, .heat-rank-strip button { transition: none !important; }
+  button, input, select, textarea, .business-task, .business-metric, .heat-rank-strip button, .tab, .filter, .stat-chip, .map-drop, .panel, .map-scroll > * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
 
@@ -3080,7 +3146,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .tabs { gap: 7px; }
 .tab, .filter {
-  min-height: 38px;
+  min-height: 44px;
   height: auto;
   padding: 8px 14px;
   line-height: 1.2;
@@ -3145,12 +3211,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .business-metric:focus-visible { outline-offset: 3px; }
 .business-form { scroll-margin-top: 12px; }
 .business-field input, .business-field select, .business-field textarea,
-.business-list-head > input, .business-task-actions select {
+.business-list-head > input, .business-list-head .business-heading-actions input, .business-task-actions select {
   box-sizing: border-box;
   box-shadow: 0 1px 2px rgb(28 25 22 / 3%);
 }
 .business-field input:focus, .business-field select:focus, .business-field textarea:focus,
-.business-list-head > input:focus, .business-task-actions select:focus {
+.business-list-head > input:focus, .business-list-head .business-heading-actions input:focus, .business-task-actions select:focus {
   border-color: var(--color-accent);
   outline: none;
   box-shadow: var(--ui-focus);

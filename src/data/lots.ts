@@ -87,7 +87,7 @@ export function withEmptyMow(lot: Lot): Lot {
   if (next.id === "109" && /leon/i.test(next.street)) next = { ...next, street: "Jaleen Ave" };
   const listed = MOW_SHEET.has(next.id) && !(next.noMow ?? "").trim();
   if (listed) next = { ...next, noMow: "Yes" };
-  if (next.status === "Empty" && next.noMow !== "Yes") next = { ...next, noMow: "Yes" };
+  if (next.status === "Empty" && next.noMow !== "Yes" && next.noMow !== "Unmowed") next = { ...next, noMow: "Yes" };
   if (/^(owe|no-owe)$/i.test(next.noMow) || (next.noOwe === "Yes" && next.noMow !== "Yes" && next.noMow !== "No")) {
     next = { ...next, noMow: "No", noOwe: "" };
   }
@@ -447,6 +447,7 @@ export type Lot = {
   vehicle: string;
   acFilter: string;
   pressureWash: string;
+  washDate?: string;
   violations: string;
   washer: string;
   dryer: string;

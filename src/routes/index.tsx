@@ -621,6 +621,7 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("All");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [hiddenTasks, setHiddenTasks] = useState<Set<string>>(() => {
     try {
@@ -718,7 +719,7 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
     setStorageError("");
     try {
       const saved = await saveBusinessTask({ data: { task: next, action: "Updated" } });
-      setTasks((current) => current.map((item) => item.id === saved.id ? saved : item));
+      setTasks((current) => current.some((item) => item.id === saved.id) ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
       setHistory((current) => { const copy = { ...current }; delete copy[task.id]; return copy; });
     } catch (error) {
       setStorageError(error instanceof Error ? error.message : "Task status could not be saved.");
@@ -861,13 +862,10 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
       <button className="business-metric" type="button" onClick={() => setFilter("Follow-up due")}><span>Follow-up due</span><strong>{followUpsDue.length}</strong><small>Check on the next action</small></button>
       <button className="business-metric" type="button" onClick={() => setFilter("Title work")}><span>Open title work</span><strong>{active.filter((task) => task.category === "Title work").length}</strong><small>Transfers and documents</small></button>
     </div>
-    <div className="business-filters"><button type="button" aria-pressed={filter === "All"} onClick={() => setFilter("All")}>All tasks</button><button type="button" aria-pressed={filter === "Overdue"} onClick={() => setFilter("Overdue")}>Overdue</button><button type="button" aria-pressed={filter === "Due soon"} onClick={() => setFilter("Due soon")}>Due in 30 days</button><button type="button" aria-pressed={filter === "Follow-up due"} onClick={() => setFilter("Follow-up due")}>Follow-up due</button>{BUSINESS_CATEGORIES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}{BUSINESS_STATUSES.map((item) => <button key={item} type="button" aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
-    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Shared renewals, title work, registrations, documents, and follow-ups.</p></div><div className="business-heading-actions"><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
-    <BillsBoard onChange={setParkBills}>
-      <BusinessCalendar tasks={boardTasks} bills={parkBills} />
-    </BillsBoard>
+    <div className="business-heading"><div><p className="eyebrow">OPERATIONS WORKSPACE</p><h2>Business center</h2><p className="business-subtitle">Shared renewals, title work, registrations, documents, and follow-ups.</p></div></div>
     {storageError ? <div className="business-error" role="alert">{storageError}<button className="business-secondary" type="button" onClick={() => setStorageError("")}>Dismiss</button></div> : null}
     {legacyCount > 0 ? <div className="business-notice"><span>{legacyCount} older task(s) were found in this browser and have not been moved to shared storage.</span><button className="business-secondary" type="button" disabled={saving} onClick={() => void importLegacyTasks()}>Import to my account</button></div> : null}
+    <div className="business-list-head"><div><h3>Business task register</h3><p>{loading ? "Loading shared records…" : filtered.length + " records · nearest deadline first"}</p></div><div className="business-heading-actions"><div className="map-slot business-filter-drop"><button className="business-secondary" type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>{filter === "All" ? "Filter" : filter} ▾</button>{filtersOpen ? <div className="map-drop" role="menu">{[["All", "All tasks"], ["Overdue", "Overdue"], ["Due soon", "Due in 30 days"], ["Follow-up due", "Follow-up due"], ...BUSINESS_CATEGORIES.map((item) => [item, item] as [string, string]), ...BUSINESS_STATUSES.map((item) => [item, item] as [string, string])].map(([id, name]) => <button key={id} type="button" role="menuitemradio" aria-checked={filter === id} onClick={() => { setFilter(id); setFiltersOpen(false); }}>{name}</button>)}</div> : null}</div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /><button className="business-secondary" type="button" onClick={exportTasks}>Export CSV</button><button className="business-primary" type="button" onClick={() => setShowForm((open) => !open)}>{showForm ? "Cancel" : "+ Add task"}</button></div></div>
     {showForm ? <form className="business-form" onSubmit={(event) => void addTask(event)}><div className="business-form-title"><div><h3>{editingId ? "Edit business task" : "Create business task"}</h3><p>Track the deadline, next action, and reference details.</p></div></div>
       <label className="business-field business-field-wide">Task name<input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Submit title transfer for Lot 24" /></label>
       <label className="business-field">Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{BUSINESS_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -879,7 +877,6 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
       <label className="business-field business-field-wide">Notes<textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Missing documents, agency contact, next action…" /></label>
       <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editingId ? "Save changes" : "Save task"}</button></div>
     </form> : null}
-    <div className="business-list-head"><div><h3>Business task register</h3><p>{loading ? "Loading shared records…" : filtered.length + " records · nearest deadline first"}</p></div><input aria-label="Search business tasks" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tasks, people, references…" /></div>
     {loading ? <div className="business-empty"><h3>Loading your shared task register</h3><p>Checking the shared database…</p></div> : filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const followDays = businessDays(task.followUp); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
       <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim() ? <p className="business-task-notes">{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim()}</p> : null}{(loadTaskStickies()[task.id] ?? []).map((sticky) => <p className="business-task-notes task-sticky" key={sticky.id} style={{ background: sticky.color }}>{sticky.text}</p>)}
         <div className="business-inline-actions"><button className="business-secondary" type="button" onClick={() => void toggleAttachments(task.id)}>{expandedAttachments[task.id] ? "Hide documents" : "Documents (" + (attachments[task.id]?.length ?? "…") + ")"}</button><button className="business-secondary" type="button" onClick={() => void toggleHistory(task.id)}>{expandedHistory[task.id] ? "Hide history" : "Change history"}</button></div>
@@ -888,6 +885,9 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
       </div>
       <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select>{confirmId === task.id ? <span className="remove-confirm"><span>Are you sure?</span><button className="business-primary" type="button" onClick={() => void removeTask(task)}>Confirm</button><button className="business-secondary" type="button" onClick={() => setConfirmId(null)}>Cancel</button></span> : <button className="business-delete" type="button" onClick={() => setConfirmId(task.id)} aria-label={"Delete " + task.title}>Remove</button>}</div>
     </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
+    <BillsBoard onChange={setParkBills}>
+      <BusinessCalendar tasks={boardTasks} bills={parkBills} />
+    </BillsBoard>
     <p className="business-storage-note">Tasks, change history, and attachments are stored in the shared database and scoped to the signed-in account. Due-date reminders appear in this workspace; external email or push notifications require a separately configured delivery provider.</p>
   </div>;
 }
@@ -926,6 +926,16 @@ const STICKY_COLORS = [
   "rgba(255, 64, 64, 0.55)",
   "rgba(255, 230, 40, 0.75)",
 ];
+const MESSAGE_INK: Record<string, string> = {
+  "rgba(240, 130, 0, 0.76)": "#9a3e00",
+  "rgba(170, 255, 0, 0.7)": "#2f5c00",
+  "rgba(70, 160, 255, 0.62)": "#0d47a1",
+  "rgba(255, 64, 64, 0.55)": "#9b1c1c",
+  "rgba(255, 230, 40, 0.75)": "#6b4e00",
+};
+function messageInk(color: string) {
+  return MESSAGE_INK[color] || (/^#|^rgb/.test(color) ? color : "#111");
+}
 
 function loadBoard(): BoardNote[] {
   try {
@@ -968,6 +978,7 @@ function taskStickyNotes(task: BusinessTask): BoardNote[] {
 function dropTarget(nodes: Element[]) {
   for (const node of nodes) {
     const el = node as HTMLElement;
+    if (el.closest?.(".is-dragging")) continue;
     const task = el.closest?.("[data-task-id]") as HTMLElement | null;
     if (task?.dataset.taskId) return `task:${task.dataset.taskId}`;
     const todo = el.closest?.("[data-todo-id]") as HTMLElement | null;
@@ -978,8 +989,15 @@ function dropTarget(nodes: Element[]) {
     if (message?.dataset.messageId) return `message:${message.dataset.messageId}`;
     const lot = el.closest?.("[data-lot-id]") as HTMLElement | null;
     if (lot?.dataset.lotId) return `lot:${lot.dataset.lotId}`;
+    const board = el.closest?.("[data-board]") as HTMLElement | null;
+    if (board?.dataset.board) return `board:${board.dataset.board}`;
   }
   return "";
+}
+
+function hitTarget(x: number, y: number, ignore: Element | null) {
+  const nodes = document.elementsFromPoint(x, y).filter((node) => !ignore || (node !== ignore && !ignore.contains(node)));
+  return dropTarget(nodes);
 }
 
 function stickySpot(note: BoardNote, index: number) {
@@ -994,21 +1012,22 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
   const [text, setText] = useState("");
   const [stickyText, setStickyText] = useState("");
   const [stickyColor, setStickyColor] = useState(STICKY_COLORS[4]);
-  const [messageColor, setMessageColor] = useState(STICKY_COLORS[4]);
+  const [messageColor, setMessageColor] = useState("#111");
   const [colorOpen, setColorOpen] = useState(false);
   const [messageColorOpen, setMessageColorOpen] = useState(false);
-  const composeDrag = useRef<{ dx: number; dy: number; x: number; y: number; w: number; sx: number; sy: number; live: boolean } | null>(null);
+  const composeDrag = useRef<{ dx: number; dy: number; x: number; y: number; w: number; sx: number; sy: number; live: boolean; startPin: string } | null>(null);
   const [when, setWhen] = useState("");
   const [ready, setReady] = useState(false);
   const [biz, setBiz] = useState<BusinessTask[]>([]);
   const [bills, setBills] = useState<ParkBill[]>([]);
   const boardRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ id: string; dx: number; dy: number; x: number; y: number; homeX: number; homeY: number } | null>(null);
+  const drag = useRef<{ id: string; dx: number; dy: number; x: number; y: number; homeX: number; homeY: number; startPin: string } | null>(null);
   const [dragging, setDragging] = useState("");
   const [dropHint, setDropHint] = useState("");
   const [openPin, setOpenPin] = useState("");
   const [messagesOpen, setMessagesOpen] = useState(false);
+  const [mapMode, setMapMode] = useState<"financial" | "main">("financial");
   const [dragTick, setDragTick] = useState(0);
   useEffect(() => {
     let active = true;
@@ -1114,6 +1133,14 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
     setText("");
     if (kind === "reminder") setWhen("");
   }
+  function boardPoint(x: number, y: number) {
+    const host = frameRef.current?.querySelector<HTMLElement>("[data-board]");
+    const rect = host?.getBoundingClientRect();
+    return {
+      x: Math.max(8, Math.round(x - (rect?.left ?? 0) + (host?.scrollLeft ?? 0))),
+      y: Math.max(8, Math.round(y - (rect?.top ?? 0) + (host?.scrollTop ?? 0))),
+    };
+  }
   function pinCompose(pin: string) {
     const body = stickyText.trim();
     if (!body) return;
@@ -1175,51 +1202,63 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
     <div className="meeting-board" ref={frameRef}>
       <div className="meeting-main">
         <div className="meeting-tiles">
-          <section className="meeting-tile bulletin-tile">
+          <section className={dropHint === "board:meeting" ? "meeting-tile bulletin-tile drop-ready" : "meeting-tile bulletin-tile"} data-board="meeting">
             <h2>Meeting Board</h2>
             <div className="meeting-compose">
               <div
-                className={composeDrag.current ? "compose-sticky-wrap is-dragging" : "compose-sticky-wrap"}
-                style={composeDrag.current ? { background: stickyColor, position: "fixed", left: composeDrag.current.x, top: composeDrag.current.y, width: composeDrag.current.w, zIndex: 80, pointerEvents: "none" } : { background: stickyColor }}
+                className={composeDrag.current?.live ? "compose-sticky-wrap is-dragging" : "compose-sticky-wrap"}
+                style={composeDrag.current?.live ? { background: stickyColor, position: "fixed", left: composeDrag.current.x, top: composeDrag.current.y, width: composeDrag.current.w, zIndex: 80 } : { background: stickyColor }}
                 onPointerDown={(event) => {
                   const target = event.target as HTMLElement;
                   if (target.closest("button") || !stickyText.trim()) return;
                   const rect = event.currentTarget.getBoundingClientRect();
-                  composeDrag.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, w: rect.width, sx: event.clientX, sy: event.clientY, live: false };
+                  composeDrag.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, w: rect.width, sx: event.clientX, sy: event.clientY, live: false, startPin: "" };
+                  event.currentTarget.setPointerCapture(event.pointerId);
                 }}
                 onPointerMove={(event) => {
                   const active = composeDrag.current;
                   if (!active) return;
                   if (!active.live) {
-                    if (Math.hypot(event.clientX - active.sx, event.clientY - active.sy) < 4) return;
+                    if (Math.hypot(event.clientX - active.sx, event.clientY - active.sy) < 6) return;
                     active.live = true;
+                    active.startPin = hitTarget(active.sx, active.sy, event.currentTarget);
                     (event.currentTarget.querySelector("textarea") as HTMLTextAreaElement | null)?.blur();
-                    event.currentTarget.setPointerCapture(event.pointerId);
                   }
                   active.x = event.clientX - active.dx;
                   active.y = event.clientY - active.dy;
-                  const hint = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+                  const hint = hitTarget(event.clientX, event.clientY, event.currentTarget);
                   setDropHint((current) => (current === hint ? current : hint));
                   setDragTick((tick) => tick + 1);
                 }}
                 onPointerUp={(event) => {
                   const active = composeDrag.current;
                   if (!active) return;
-                  const pin = active.live ? dropTarget(document.elementsFromPoint(event.clientX, event.clientY)) : "";
-                  const left = Math.round(active.x);
-                  const top = Math.round(active.y);
+                  const pin = active.live ? hitTarget(event.clientX, event.clientY, event.currentTarget) : "";
+                  const moved = Math.hypot(event.clientX - active.sx, event.clientY - active.sy);
                   const body = stickyText.trim();
                   composeDrag.current = null;
                   setDropHint("");
                   setDragTick((tick) => tick + 1);
-                  if (pin) {
+                  if (!active.live) return;
+                  if (pin.startsWith("board:") && moved > 24 && body) {
+                    const spot = boardPoint(active.x, active.y);
+                    setNotes((current) => [{ id: `board-${Date.now()}`, kind: "sticky", text: body, when: "", color: stickyColor, pin: "board:meeting", x: spot.x, y: spot.y }, ...current]);
+                    setStickyText("");
+                    return;
+                  }
+                  if (pin && pin !== active.startPin) {
                     pinCompose(pin);
                     return;
                   }
-                  if (active.live && body) {
-                    setNotes((current) => [{ id: `board-${Date.now()}`, kind: "sticky", text: body, when: "", color: stickyColor, x: left, y: top }, ...current]);
+                  if (moved > 24 && body) {
+                    setNotes((current) => [{ id: `board-${Date.now()}`, kind: "sticky", text: body, when: "", color: stickyColor, x: Math.round(active.x), y: Math.round(active.y) }, ...current]);
                     setStickyText("");
                   }
+                }}
+                onPointerCancel={() => {
+                  composeDrag.current = null;
+                  setDropHint("");
+                  setDragTick((tick) => tick + 1);
                 }}
               >
                 <button type="button" className="sticky-color" style={{ background: stickyColor }} aria-label="Choose sticky color" aria-expanded={colorOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setColorOpen((open) => !open)} />
@@ -1239,16 +1278,72 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
                 />
               </div>
             </div>
+            {stickies.filter((note) => note.pin === "board:meeting").map((note) => {
+              const live = drag.current?.id === note.id;
+              const spot = live ? { x: drag.current!.x, y: drag.current!.y } : { x: note.x ?? 24, y: note.y ?? 72 };
+              return (
+                <article
+                  key={note.id}
+                  className={dragging === note.id ? "sticky is-dragging" : "sticky"}
+                  style={{ background: note.color, position: live ? "fixed" : "absolute", left: spot.x, top: spot.y, zIndex: live ? 80 : 5 }}
+                  onPointerDown={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    drag.current = { id: note.id, dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, homeX: rect.left, homeY: rect.top, startPin: "board:meeting" };
+                    setDragging(note.id);
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    const active = drag.current;
+                    if (!active || active.id !== note.id) return;
+                    active.x = event.clientX - active.dx;
+                    active.y = event.clientY - active.dy;
+                    const hint = hitTarget(event.clientX, event.clientY, event.currentTarget);
+                    setDropHint((current) => (current === hint ? current : hint));
+                    setDragTick((tick) => tick + 1);
+                  }}
+                  onPointerUp={(event) => {
+                    const active = drag.current;
+                    if (!active || active.id !== note.id) return;
+                    const pin = hitTarget(event.clientX, event.clientY, event.currentTarget);
+                    const left = Math.round(active.x);
+                    const top = Math.round(active.y);
+                    drag.current = null;
+                    setDragging("");
+                    setDropHint("");
+                    if (pin.startsWith("board:") || !pin) {
+                      const spot = boardPoint(left, top);
+                      setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, pin: "board:meeting", x: spot.x, y: spot.y } : item)));
+                      return;
+                    }
+                    const target = pin.startsWith("lot:") ? `todo:${pin.slice(4)}` : pin;
+                    rememberPin(note.id, note.text, note.color, target);
+                    setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, kind: "pin", pin: target, x: undefined, y: undefined } : item)));
+                    setOpenPin(note.id);
+                  }}
+                  onPointerCancel={() => {
+                    if (drag.current?.id !== note.id) return;
+                    drag.current = null;
+                    setDragging("");
+                    setDropHint("");
+                  }}
+                >
+                  <button type="button" aria-label="Remove sticky" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
+                  <p>{note.text}</p>
+                </article>
+              );
+            })}
           </section>
           <div className="message-float meeting-tile" data-resize="messages">
+            <h3>Message Board</h3>
             {messages.length > 2 ? (
               <button type="button" className="message-all" onClick={() => setMessagesOpen((open) => !open)}>{messagesOpen ? "Show latest" : "All messages"}</button>
             ) : null}
             {messages.length ? (
               <ul className="meeting-messages">
                 {(messagesOpen ? messages : messages.slice(0, 2)).map((note, index) => (
-                  <li key={note.id} data-message-id={note.id} className={dropHint === `message:${note.id}` ? "drop-ready" : ""} style={{ background: note.color || "#fff" }}>
-                    <p>{index === 0 ? <b>Latest</b> : index === 1 ? <b>Previous</b> : null} {note.text}</p>
+                  <li key={note.id} data-message-id={note.id} className={dropHint === `message:${note.id}` ? "drop-ready" : ""}>
+                    <p>{index === 0 ? <b>Latest</b> : index === 1 ? <b>Previous</b> : null} <span className="message-ink" style={{ color: messageInk(note.color) }}>{note.text}</span></p>
                     <PinMarks notes={notes} pin={`message:${note.id}`} open={openPin} onOpen={setOpenPin} onRemove={forgetPin} />
                     <button type="button" aria-label="Remove message" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
                   </li>
@@ -1258,10 +1353,10 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
             <div className="message-compose">
               <textarea
                 className="message-write"
-                rows={2}
+                rows={1}
                 value={text}
                 placeholder="Write a message"
-                style={{ background: messageColor }}
+                style={{ color: messageInk(messageColor), fontWeight: 700 }}
                 onChange={(event) => setText(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -1273,7 +1368,7 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
               <button type="button" className="sticky-color message-color" style={{ background: messageColor }} aria-label="Choose message color" aria-expanded={messageColorOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setMessageColorOpen((open) => !open)} />
               {messageColorOpen ? (
                 <span className="sticky-colors message-colors">
-                  {STICKY_COLORS.map((color) => (
+                  {["#111", ...STICKY_COLORS].map((color) => (
                     <button key={color} type="button" style={{ background: color }} aria-label={`Message color ${color}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setMessageColor(color); setMessageColorOpen(false); }} />
                   ))}
                 </span>
@@ -1349,8 +1444,21 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
           />
         </section>
         <section className="mini-finance resize-box" data-resize="finance">
-          <h3>Financial</h3>
-          <HeatBoard lots={lots} scoped={lots} selected={null} onOpen={onOpen} mini />
+          <div className="mini-map-head">
+            <h3>{mapMode === "financial" ? "Financial" : "Main"}</h3>
+            <button type="button" className="mini-map-switch" onClick={() => setMapMode((mode) => (mode === "financial" ? "main" : "financial"))}>
+              {mapMode === "financial" ? "Main map" : "Financial"}
+            </button>
+          </div>
+          {mapMode === "financial" ? (
+            <HeatBoard lots={lots} scoped={lots} selected={null} onOpen={onOpen} mini dropLot={dropHint.startsWith("lot:") ? dropHint.slice(4) : ""} stickyIds={new Set([...notes.filter((note) => note.kind === "pin" && (note.pin?.startsWith("todo:") || note.pin?.startsWith("lot:"))).map((note) => note.pin!.slice(note.pin!.indexOf(":") + 1)), ...lots.filter((lot) => lot.stickies?.length).map((lot) => lot.id)])} />
+          ) : (
+            <div className="mini-heat">
+              {([1, 2, 3] as const).map((id) => (
+                <PlatMap key={id} sheet={id} query="" filter="all" selected={null} lots={lots} dropLot={dropHint.startsWith("lot:") ? dropHint.slice(4) : ""} stickyIds={new Set([...notes.filter((note) => note.kind === "pin" && (note.pin?.startsWith("todo:") || note.pin?.startsWith("lot:"))).map((note) => note.pin!.slice(note.pin!.indexOf(":") + 1)), ...lots.filter((lot) => lot.stickies?.length).map((lot) => lot.id)])} onSelect={onOpen} />
+              ))}
+            </div>
+          )}
         </section>
         </div>
         {reminders.length ? (
@@ -1368,18 +1476,18 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
           </section>
         ) : null}
       </div>
-      {stickies.map((note) => {
+      {stickies.filter((note) => note.pin !== "board:meeting").map((note) => {
         const live = drag.current?.id === note.id;
         const spot = live ? { x: drag.current!.x, y: drag.current!.y } : { x: note.x ?? 40, y: note.y ?? 80 };
         return (
           <article
             key={note.id}
             className={dragging === note.id ? "sticky is-dragging" : "sticky"}
-            style={{ background: note.color, position: "fixed", left: spot.x, top: spot.y, zIndex: live ? 80 : 30, pointerEvents: live ? "none" : "auto" }}
+            style={{ background: note.color, position: "fixed", left: spot.x, top: spot.y, zIndex: live ? 80 : 30 }}
             onPointerDown={(event) => {
               if ((event.target as HTMLElement).closest("button")) return;
               const rect = event.currentTarget.getBoundingClientRect();
-              drag.current = { id: note.id, dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, homeX: rect.left, homeY: rect.top };
+              drag.current = { id: note.id, dx: event.clientX - rect.left, dy: event.clientY - rect.top, x: rect.left, y: rect.top, homeX: rect.left, homeY: rect.top, startPin: hitTarget(event.clientX, event.clientY, event.currentTarget) };
               setDragging(note.id);
               event.currentTarget.setPointerCapture(event.pointerId);
             }}
@@ -1388,20 +1496,25 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
               if (!active || active.id !== note.id) return;
               active.x = event.clientX - active.dx;
               active.y = event.clientY - active.dy;
-              const hint = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+              const hint = hitTarget(event.clientX, event.clientY, event.currentTarget);
               setDropHint((current) => (current === hint ? current : hint));
               setDragTick((tick) => tick + 1);
             }}
             onPointerUp={(event) => {
               const active = drag.current;
               if (!active || active.id !== note.id) return;
-              const pin = dropTarget(document.elementsFromPoint(event.clientX, event.clientY));
+              const pin = hitTarget(event.clientX, event.clientY, event.currentTarget);
               const left = Math.round(active.x);
               const top = Math.round(active.y);
               drag.current = null;
               setDragging("");
               setDropHint("");
-              if (pin) {
+              if (pin.startsWith("board:")) {
+                const spot = boardPoint(left, top);
+                setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, pin: "board:meeting", x: spot.x, y: spot.y } : item)));
+                return;
+              }
+              if (pin && pin !== active.startPin) {
                 const target = pin.startsWith("lot:") ? `todo:${pin.slice(4)}` : pin;
                 rememberPin(note.id, note.text, note.color, target);
                 setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, kind: "pin", pin: target, x: undefined, y: undefined } : item)));
@@ -1409,6 +1522,12 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
                 return;
               }
               setNotes((current) => current.map((item) => (item.id === note.id ? { ...item, x: left, y: top } : item)));
+            }}
+            onPointerCancel={() => {
+              if (drag.current?.id !== note.id) return;
+              drag.current = null;
+              setDragging("");
+              setDropHint("");
             }}
           >
             <button type="button" aria-label="Remove sticky" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>×</button>
@@ -1517,6 +1636,7 @@ function BillsBoard({ onChange, children }: { onChange?: (bills: ParkBill[]) => 
   return (
     <div className="bills-board">
       {children}
+      <h3 className="bills-title">Bills</h3>
       <div className="bill-list">
         {bills.map((bill) => {
           const days = businessDays(bill.due);
@@ -1655,6 +1775,7 @@ function Home() {
   const quickBooksRef = useRef<HTMLInputElement>(null);
   const [sheet, setSheet] = useState<SheetId>(1);
   const [main, setMain] = useState(true);
+  const [walkAll, setWalkAll] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LotFilter[]>([]);
   const [selected, setSelected] = useState<string | null>("1");
@@ -1834,6 +1955,25 @@ function Home() {
     }
   }
 
+  function stepLot(dir: -1 | 1) {
+    const ordered = [...lots].sort((a, b) => Number(a.lot) - Number(b.lot) || a.lot.localeCompare(b.lot));
+    const sequence = main || walkAll ? ordered : ordered.filter((item) => sheetOf(item.id) === sheet);
+    if (!sequence.length) return;
+    const index = sequence.findIndex((item) => item.id === selected);
+    const nextIndex = index < 0 ? (dir > 0 ? 0 : sequence.length - 1) : (index + dir + sequence.length) % sequence.length;
+    const target = sequence[nextIndex];
+    setSelected(target.id);
+    const at = visible.findIndex((item) => item.id === target.id);
+    if (at >= 0) setMatchAt(at);
+    const nextSheet = sheetOf(target.id);
+    if (!nextSheet) return;
+    setSheet(nextSheet);
+    if (main) {
+      setWalkAll(true);
+      setMain(false);
+    }
+  }
+
   function showMatch(index: number) {
     if (visible.length === 0) return;
     const at = ((index % visible.length) + visible.length) % visible.length;
@@ -1851,6 +1991,8 @@ function Home() {
   const visibleIds = useMemo(() => new Set(visible.map((lot) => lot.id)), [visible]);
   const lot = lots.find((item) => item.id === selected) ?? null;
   const empty = useMemo(() => lots.reduce((n, item) => n + (item.status === "Empty" ? 1 : 0), 0), [lots]);
+  const occupied = useMemo(() => lots.reduce((n, item) => n + (item.status === "Occupied" ? 1 : 0), 0), [lots]);
+  const pastDue = useMemo(() => lots.reduce((n, item) => n + (matchesFilter(item, "past-due") ? 1 : 0), 0), [lots]);
   const notes = useMemo(() => lots.reduce((n, item) => n + (item.issues.trim() ? 1 : 0), 0), [lots]);
   const mapLabel = main ? "Main" : SHEET_COPY[sheet].title;
   const filterNames = (
@@ -1861,7 +2003,7 @@ function Home() {
       ["renters", "Renters"],
       ["owners", "Owners"],
       ["no-owe", "NO-OWE"],
-      ["due", "Due"],
+      ["due", "Rent due"],
       ["past-due", "Past due"],
       ["roof", "Needs roof"],
       ["pets", "Pets"],
@@ -1988,7 +2130,11 @@ function Home() {
         <div className="brand">
           <h1>Magnolia Central of Florida Estates</h1>
           <p className="stats">
-            {lots.length} lots · {empty} empty · {notes} notes
+            <button type="button" className="stat-chip" onClick={() => { setFilter([]); setView("map"); }}><b>{lots.length}</b> lots</button>
+            <button type="button" className="stat-chip" onClick={() => { setFilter(["occupied"]); setView("map"); }}><b>{occupied}</b> occupied</button>
+            <button type="button" className="stat-chip" onClick={() => { setFilter(["empty"]); setView("map"); }}><b>{empty}</b> empty</button>
+            <button type="button" className="stat-chip" onClick={() => { setFilter(["issues"]); setView("map"); }}><b>{notes}</b> notes</button>
+            <button type="button" className="stat-chip" onClick={() => { setFilter(["past-due"]); setView("map"); }}><b>{pastDue}</b> past due</button>
           </p>
         </div>
         <input
@@ -2037,6 +2183,7 @@ function Home() {
                     aria-checked={id === "main" ? main : !main && String(sheet) === id}
                     onClick={() => {
                       setView("map");
+                      setWalkAll(false);
                       if (id === "main") setMain(true);
                       else {
                         setMain(false);
@@ -2347,7 +2494,7 @@ function Home() {
                       Print map
                     </button>
                   </div>
-                  <PlatMap sheet={id} query={query} filter={filter} selected={selected} lots={lots} symbols={symbols} onSelect={choose} onCamera={() => openDevice("office")} onPlantCamera={() => openDevice("plant")} onAlarm={() => openDevice("alarm")} alarmOn={alarmOn} />
+                  <PlatMap sheet={id} query={query} filter={filter} selected={selected} lots={lots} symbols={symbols} stickyIds={new Set(lots.filter((lot) => lot.stickies?.length).map((lot) => lot.id))} onSelect={choose} onCamera={() => openDevice("office")} onPlantCamera={() => openDevice("plant")} onAlarm={() => openDevice("alarm")} alarmOn={alarmOn} />
                 </section>
               ))}
             </div>
@@ -2361,22 +2508,22 @@ function Home() {
               </div>
               <div className="map-stage">
                 <div className="map-scaler">
-                  <PlatMap sheet={sheet} query={query} filter={filter} selected={selected} lots={lots} symbols={symbols} onSelect={choose} onCamera={() => openDevice("office")} onPlantCamera={() => openDevice("plant")} onAlarm={() => openDevice("alarm")} alarmOn={alarmOn} />
+                  <PlatMap sheet={sheet} query={query} filter={filter} selected={selected} lots={lots} symbols={symbols} stickyIds={new Set(lots.filter((lot) => lot.stickies?.length).map((lot) => lot.id))} onSelect={choose} onCamera={() => openDevice("office")} onPlantCamera={() => openDevice("plant")} onAlarm={() => openDevice("alarm")} alarmOn={alarmOn} />
                 </div>
               </div>
               <button
                 className="map-nav prev"
                 type="button"
-                aria-label="Previous map"
-                onClick={() => setSheet(sheet === 1 ? 3 : ((sheet - 1) as SheetId))}
+                aria-label="Previous lot"
+                onClick={() => stepLot(-1)}
               >
                 ‹
               </button>
               <button
                 className="map-nav next"
                 type="button"
-                aria-label="Next map"
-                onClick={() => setSheet(sheet === 3 ? 1 : ((sheet + 1) as SheetId))}
+                aria-label="Next lot"
+                onClick={() => stepLot(1)}
               >
                 ›
               </button>
@@ -2388,22 +2535,16 @@ function Home() {
               <button
                 className="map-nav prev"
                 type="button"
-                aria-label="Previous map"
-                onClick={() => {
-                  setMain(false);
-                  setSheet(3);
-                }}
+                aria-label="Previous lot"
+                onClick={() => stepLot(-1)}
               >
                 ‹
               </button>
               <button
                 className="map-nav next"
                 type="button"
-                aria-label="Next map"
-                onClick={() => {
-                  setMain(false);
-                  setSheet(1);
-                }}
+                aria-label="Next lot"
+                onClick={() => stepLot(1)}
               >
                 ›
               </button>
@@ -2590,7 +2731,7 @@ function registerText(item: Lot, col: RegisterCol): string {
     return raw !== "" && raw !== "no" ? "Yes" : "";
   }
   if (col.kind === "status") return item.status;
-  if (col.kind === "mow") return item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" ? item.noMow : "";
+  if (col.kind === "mow") return item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" || item.noMow === "Unmowed" ? item.noMow : "";
   if (col.kind === "first" || col.kind === "last") {
     const parts = nameParts(item.name);
     return col.kind === "first" ? parts.first : parts.last;
@@ -2673,13 +2814,14 @@ const RegisterCell = memo(function RegisterCell({
       <td onClick={stop}>
         <select
           className="cell-edit"
-          value={item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" ? item.noMow : ""}
+          value={item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" || item.noMow === "Unmowed" ? item.noMow : ""}
           onChange={(e) => onSave({ ...item, noMow: e.target.value })}
         >
           <option value="">—</option>
           <option>Yes</option>
           <option>No</option>
           <option>Owe</option>
+          <option>Unmowed</option>
         </select>
       </td>
     );
@@ -4097,10 +4239,20 @@ const HEAT_METRICS = [
 
 type HeatMetric = (typeof HEAT_METRICS)[number][0];
 
-function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot[]; scoped: Lot[]; selected: string | null; onOpen: (id: string) => void; mini?: boolean }) {
+function HeatBoard({ lots, scoped, selected, onOpen, mini = false, dropLot = "", stickyIds }: { lots: Lot[]; scoped: Lot[]; selected: string | null; onOpen: (id: string) => void; mini?: boolean; dropLot?: string; stickyIds?: ReadonlySet<string> }) {
   const [metric, setMetric] = useState<HeatMetric>("overall");
   const [metricsOpen, setMetricsOpen] = useState(false);
-  const [listOpen, setListOpen] = useState(false);
+  const [lotFilters, setLotFilters] = useState<LotFilter[]>([]);
+  const [lotsOpen, setLotsOpen] = useState(false);
+  const lotFilterNames = [
+    ["empty", "Empty"],
+    ["occupied", "Occupied"],
+    ["issues", "Issues"],
+    ["renters", "Renters"],
+    ["owners", "Owners"],
+    ["due", "Rent due"],
+    ["roof", "Needs roof"],
+  ] as const;
   const homes = lots.filter((lot) => lot.status !== "Open");
   const insuredHomes = homes.filter((lot) => lot.homeIns === "Yes");
   const poolDefaults = {
@@ -4205,7 +4357,8 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
     paint[row.lot.id] = { fill: band.color, ink: heatInk(band.color), value };
   });
   const metricLabel = HEAT_METRICS.find((item) => item[0] === metric)?.[1] ?? "Value";
-  const counted = scoped.filter((lot) => lot.status !== "Open");
+  const lotFilterLabel = lotFilters.length === 0 ? "All" : lotFilters.length === 1 ? lotFilterNames.find(([id]) => id === lotFilters[0])?.[1] ?? "All" : `${lotFilters.length} on`;
+  const counted = scoped.filter((lot) => lot.status !== "Open" && (lotFilters.length === 0 || lotFilters.some((item) => matchesFilter(lot, item))));
   const rentSum = counted.reduce((sum, lot) => sum + (lot.status === "Empty" ? 0 : (parseMoney(lot.rent) ?? 0)), 0);
   const expenseSum = counted.reduce((sum, lot) => sum + monthlyExpense(lot), 0);
   const emptyCount = counted.filter((lot) => lot.status === "Empty").length;
@@ -4226,7 +4379,7 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
     return (
       <div className="mini-heat">
         {([1, 2, 3] as const).map((id) => (
-          <PlatMap key={id} sheet={id} query="" filter="all" selected={selected} lots={lots} heat={paint} onSelect={onOpen} />
+          <PlatMap key={id} sheet={id} query="" filter="all" selected={selected} lots={lots} heat={paint} dropLot={dropLot} stickyIds={stickyIds} onSelect={onOpen} />
         ))}
       </div>
     );
@@ -4234,7 +4387,7 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
   return (
     <div className="todo heat-board">
       <div className="financial-window-actions">
-        <button type="button" className="tab" onClick={() => { window.open(`${window.location.origin}${window.location.pathname}?view=heat`, "_blank", "noopener,noreferrer"); }}>
+        <button type="button" className="tab" onClick={() => { const url = new URL(window.location.href); url.searchParams.set("view", "heat"); window.open(url.toString(), "_blank", "noopener,noreferrer"); }}>
           Open financial dashboard in new window ↗
         </button>
       </div>
@@ -4270,8 +4423,9 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
           </>
         ) : null}
       </section>
+      <div className="heat-filter-row">
       <div className="map-slot heat-metric-drop">
-        <button className="filter" type="button" aria-expanded={metricsOpen} onClick={() => setMetricsOpen((open) => !open)}>
+        <button className="filter" type="button" aria-expanded={metricsOpen} onClick={() => { setLotsOpen(false); setMetricsOpen((open) => !open); }}>
           {metricLabel} ▾
         </button>
         {metricsOpen ? (
@@ -4289,6 +4443,30 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
           </div>
         ) : null}
       </div>
+      <div className="map-slot heat-metric-drop">
+        <button className="filter" type="button" aria-expanded={lotsOpen} onClick={() => { setMetricsOpen(false); setLotsOpen((open) => !open); }}>
+          {lotFilterLabel} ▾
+        </button>
+        {lotsOpen ? (
+          <div className="map-drop filter-checks" role="group" aria-label="Lot filters">
+            <label>
+              <input type="checkbox" checked={lotFilters.length === 0} onChange={() => setLotFilters([])} />
+              All
+            </label>
+            {lotFilterNames.map(([id, name]) => (
+              <label key={id}>
+                <input
+                  type="checkbox"
+                  checked={lotFilters.includes(id)}
+                  onChange={() => setLotFilters((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
+                />
+                {name}
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      </div>
       <div className="money-totals">
         <span>{metric === "roi" ? "Profit" : metricLabel} <b>{metricText}</b></span>
       </div>
@@ -4304,88 +4482,14 @@ function HeatBoard({ lots, scoped, selected, onOpen, mini = false }: { lots: Lot
           No figure
         </span>
       </div>
-      <h3>Profit ranking · green to red · best to worst from left to right</h3>
-      <div className="heat-rank-strip" aria-label={`Lots ranked best to worst by ${metricLabel}`}>
-        {scored.map((row, index) => {
-          const color = paint[row.lot.id];
-          return (
-            <button
-              key={row.lot.id}
-              type="button"
-              data-lot-id={row.lot.id}
-              title={`Rank ${index + 1}: Lot ${row.lot.lot} · ${label(row.amount)}`}
-              style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}
-              onClick={() => onOpen(row.lot.id)}
-            >
-              <b>{row.lot.lot}</b>
-              <span>{label(row.amount)}</span>
-            </button>
-          );
-        })}
-      </div>
       <div className="map-stack">
         {([1, 2, 3] as const).map((id) => (
           <section key={id} className="map-block">
             <h2>{SHEET_COPY[id].title}</h2>
-            <PlatMap sheet={id} query="" filter="all" selected={selected} lots={lots} heat={paint} onSelect={onOpen} />
+            <PlatMap sheet={id} query="" filter={lotFilters.length ? lotFilters : "all"} selected={selected} lots={lots} heat={paint} onSelect={onOpen} />
           </section>
         ))}
       </div>
-      <div className="heat-list-head">
-        <h3>Best to worst · {metricLabel}</h3>
-        <div className="map-slot heat-metric-drop">
-          <button className="filter" type="button" aria-expanded={listOpen} onClick={() => setListOpen((open) => !open)}>
-            {metricLabel} ▾
-          </button>
-          {listOpen ? (
-            <div className="map-drop filter-checks" role="group" aria-label="Best to worst filters">
-              {HEAT_METRICS.map(([id, name]) => (
-                <label key={id}>
-                  <input
-                    type="checkbox"
-                    checked={metric === id}
-                    onChange={() => setMetric((current) => (current === id ? "overall" : id))}
-                  />
-                  {name}
-                </label>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {scored.length === 0 ? (
-        <p className="todo-empty">Nothing to color for this filter.</p>
-      ) : (
-        <table className="heat-rank">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Lot</th>
-              <th>Address</th>
-              <th>Name</th>
-              <th>{metricLabel}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {scored.map((row, index) => {
-              const color = paint[row.lot.id];
-              return (
-                <tr key={row.lot.id} className="heat-rank-lot" style={{ background: color?.fill ?? "#d5d0c8", color: color?.ink ?? "#1c1916" }}>
-                  <td>{index + 1}</td>
-                  <td>
-                    <button type="button" onClick={() => onOpen(row.lot.id)}>
-                      {row.lot.lot}
-                    </button>
-                  </td>
-                  <td>{[row.lot.address, row.lot.street].filter(Boolean).join(" ")}</td>
-                  <td>{displayName(row.lot) || "—"}</td>
-                  <td>{label(row.amount)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
     </div>
   );
 }
@@ -4580,11 +4684,12 @@ function LotExtras({
         <p className="pet-title">MOW</p>
         <label className="wiring-field">
           <span>MOW</span>
-          <select className="mow-select" value={values.noMow === "Yes" || values.noMow === "No" || values.noMow === "Owe" ? values.noMow : ""} onChange={(e) => onChange({ noMow: e.target.value })}>
+          <select className="mow-select" value={values.noMow === "Yes" || values.noMow === "No" || values.noMow === "Owe" || values.noMow === "Unmowed" ? values.noMow : ""} onChange={(e) => onChange({ noMow: e.target.value })}>
             <option value="">—</option>
             <option>Yes</option>
             <option>No</option>
             <option>Owe</option>
+            <option>Unmowed</option>
           </select>
         </label>
         <label className="wiring-field">
@@ -4648,12 +4753,25 @@ function LotExtras({
         <p className="pet-title">Pressure wash</p>
         <label className="wiring-field">
           <span>Pressure wash</span>
-          <input value={values.pressureWash} onChange={(e) => onChange({ pressureWash: e.target.value })} />
+          <select
+            className="mow-select"
+            value={values.pressureWash === "Yes" || values.pressureWash === "Needs" ? values.pressureWash : ""}
+            onChange={(e) => {
+              const pressureWash = e.target.value;
+              onChange({ pressureWash, washDate: pressureWash === "Yes" ? values.washDate?.trim() || dayStamp() : "" });
+            }}
+          >
+            <option value="">—</option>
+            <option>Yes</option>
+            <option>Needs</option>
+          </select>
         </label>
-        <label className="wiring-field">
-          <span>Cost</span>
-          <input value={values.washCost ?? ""} inputMode="decimal" onChange={(e) => onChange({ washCost: e.target.value })} />
-        </label>
+        {values.pressureWash === "Yes" ? (
+          <label className="wiring-field">
+            <span>Date</span>
+            <input type="date" value={(values.washDate ?? "").slice(0, 10)} onChange={(e) => onChange({ washDate: e.target.value })} />
+          </label>
+        ) : null}
       </div>
       <div className="pet-block">
         <p className="pet-title">Home inspection</p>

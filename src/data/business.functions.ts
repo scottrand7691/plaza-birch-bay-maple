@@ -35,7 +35,7 @@ export type BusinessHistoryEntry = {
 };
 
 const validId = (value: unknown): value is string =>
-  typeof value === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(value);
+  typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,100}$/.test(value);
 const text = (value: unknown, max = 4000) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 const date = (value: unknown) => {

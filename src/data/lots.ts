@@ -12,8 +12,8 @@ export function isRenterLot(lot: { renter?: string }) {
   return role.includes("renter") || role.includes("rent-to-own") || role.includes("rent to own");
 }
 
-export function mowChoice(value?: string): "Yes" | "NO-OWE" {
-  return value?.trim().toLowerCase() === "yes" ? "Yes" : "NO-OWE";
+export function mowChoice(value?: string): "Yes" | "Owe-Mow" {
+  return value?.trim().toLowerCase() === "yes" ? "Yes" : "Owe-Mow";
 }
 
 const MOW_SHEET = new Set([
@@ -88,15 +88,17 @@ export function withEmptyMow(lot: Lot): Lot {
   const listed = MOW_SHEET.has(next.id) && !(next.noMow ?? "").trim();
   if (listed) next = { ...next, noMow: "Yes" };
   if (next.status === "Empty" && next.noMow !== "Yes" && next.noMow !== "Unmowed") next = { ...next, noMow: "Yes" };
-  if (/^(owe|no-owe)$/i.test(next.noMow) || (next.noOwe === "Yes" && next.noMow !== "Yes" && next.noMow !== "No")) {
-    next = { ...next, noMow: "No", noOwe: "" };
-  }
+  if (/^(owe|no-owe)$/i.test(next.noMow)) next = { ...next, noMow: "Owe-Mow" };
   const wiringKey = `${next.address}|${wiringStreet(next.street)}`;
   if (WIRING_YES.has(wiringKey) && next.wiring !== "Yes" && next.wiring !== "No") next = { ...next, wiring: "Yes" };
   if (HOME_INS_YES.has(wiringKey) && next.homeIns !== "Yes" && next.homeIns !== "No") next = { ...next, homeIns: "Yes" };
-  if (next.address === "1471" && /lake/i.test(next.street) && next.homeIns === "Yes") next = { ...next, homeIns: "" };
+  if (next.address === "1471" && /lake/i.test(next.street)) next = { ...next, lot: "1471 (outside park)", homeIns: next.homeIns === "Yes" ? "" : next.homeIns };
+  if (next.address === "4053" && /bonnie/i.test(next.street)) next = { ...next, lot: "4053 (outside park)" };
+  if (next.address === "3530" && /magnolia terrace/i.test(next.street)) next = { ...next, lot: "3530 (outside park)" };
   let lotRent = next.lotRent ?? "";
+  const outside = next.id === "4053-Bonnie Drive" || next.id === "1471-Lake Drive" || next.id === "3530-Magnolia Terrace Ave" || /\(outside park\)/i.test(next.lot);
   if (next.status !== "Occupied") lotRent = "";
+  else if (outside) lotRent = lotRent.trim() === "540" ? "" : lotRent;
   else if (!lotRent.trim()) lotRent = "540";
   const homeRent = next.homeRent ?? "";
   const rent = rentTotal(lotRent, homeRent, petFee(next.dogs, next.cats));
@@ -114,7 +116,7 @@ export function matchesFilter(lot: Lot, filter: LotFilter): boolean {
   if (filter === "issues") return lot.issues.trim().length > 0;
   if (filter === "renters") return isRenterLot(lot);
   if (filter === "owners") return lot.status === "Occupied" && !role.includes("renter") && !rentToOwn;
-  if (filter === "no-owe") return lot.noMow === "Owe" || /^no-owe$/i.test(lot.noMow);
+  if (filter === "no-owe") return lot.noMow === "Owe" || lot.noMow === "Owe-Mow" || /^no-owe$/i.test(lot.noMow);
   if (filter === "due") return dueState(lot.rentDue) === "due";
   if (filter === "past-due") return dueState(lot.rentDue) === "past";
   if (filter === "roof") return lot.roofReplace === "Yes";
@@ -362,7 +364,8 @@ export function buildTodo(lots: Lot[]): TodoItem[] {
       add(when || today, job.note.trim() || "Maintenance");
     }
     const notes = lotNotes(lot);
-    if (!notes && tasks.length === 0) continue;
+    const stickyText = (lot.stickies ?? []).map((sticky) => sticky.text.trim()).filter(Boolean).join(" · ");
+    if (!notes && !stickyText && tasks.length === 0) continue;
     tasks.sort((a, b) => a.date.localeCompare(b.date));
     items.push({
       id: lot.id,
@@ -370,7 +373,7 @@ export function buildTodo(lots: Lot[]): TodoItem[] {
       address: [lot.address, lot.street].filter(Boolean).join(" "),
       street: lot.street,
       name: displayName(lot),
-      notes,
+      notes: [notes, stickyText].filter(Boolean).join(" · "),
       text: tasks.map((task) => task.text).join(" · "),
       date: tasks[0]?.date ?? "",
     });
@@ -623,9 +626,9 @@ export const LOTS: Lot[] = [
   { id: "129", lot: "129", address: "5473", street: "Leon Circle", name: "Pena, Daniel", issues: "", status: "Occupied", renter: "", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
   { id: "130", lot: "130", address: "5477", street: "Leon Circle", name: "Tanyer, Joanne", issues: "", status: "Occupied", renter: "", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
   { id: "130.5", lot: "130.5", address: "3729", street: "Ermine St", name: "Botey", issues: "Tell Botey to make Money Order to ETC fbo Gregory Horne", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
-  { id: "1471-Lake Drive", lot: "", address: "1471", street: "Lake Drive", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
-  { id: "4053-Bonnie Drive", lot: "", address: "4053", street: "Bonnie Drive", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
-  { id: "3530-Magnolia Terrace Ave", lot: "", address: "3530", street: "Magnolia Terrace Ave", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
+  { id: "1471-Lake Drive", lot: "1471 (outside park)", address: "1471", street: "Lake Drive", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
+  { id: "4053-Bonnie Drive", lot: "4053 (outside park)", address: "4053", street: "Bonnie Drive", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
+  { id: "3530-Magnolia Terrace Ave", lot: "3530 (outside park)", address: "3530", street: "Magnolia Terrace Ave", name: "", issues: "", status: "Occupied", renter: "Renter", rent: "", key: "", phone: "", email: "", noMow: "", lateRent: "", guest: "", vehicle: "", acFilter: "", pressureWash: "", violations: "", washer: "", dryer: "" },
 ];
 
 export const LOT_BY_ID = new Map(LOTS.map((l) => [l.id, l]));

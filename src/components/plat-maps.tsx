@@ -663,14 +663,11 @@ function CatMark({ x, y, s }: { x: number; y: number; s: number }) {
 
 function SprayMark({ x, y, s }: { x: number; y: number; s: number }) {
   return (
-    <g transform={`translate(${x} ${y}) scale(${s / 16}) translate(16 0) scale(-1 1)`} fill="#0b4db5" stroke="#0b4db5" strokeWidth={2.6} strokeLinecap="round" pointerEvents="none">
-      <path d="M1.2 13.6 H5.2 L7 9.4 H9.6" fill="none" />
-      <path d="M10.4 8.2 C12.6 6.2 14.2 5 15.2 2.8" fill="none" />
-      <path d="M10.6 9.6 C13.2 8.8 14.6 8.6 15.4 6.4" fill="none" />
-      <path d="M10 11 C12 11.8 13.2 12.6 13.8 14.2" fill="none" />
-      <circle cx="15.2" cy="2.8" r="1.15" stroke="none" />
-      <circle cx="15.4" cy="6.4" r="1.15" stroke="none" />
-      <circle cx="13.8" cy="14.2" r="1.15" stroke="none" />
+    <g transform={`translate(${x} ${y}) scale(${s / 16}) translate(16 0) scale(-1 1)`} fill="#0b4db5" stroke="#0b4db5" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none">
+      <path d="M0.6 6.4 H4.8 L5.8 4.8 H7.6 L9.4 6.6 V9.4 L7.6 11.2 H5.8 L4.8 9.6 H0.6 Z" />
+      <path d="M10 8 H15.6" fill="none" />
+      <path d="M10 7.2 L14.8 2.6" fill="none" />
+      <path d="M10 8.8 L14.8 13.4" fill="none" />
     </g>
   );
 }
@@ -860,19 +857,19 @@ const LotBox = memo(function LotBox({
     .filter(Boolean)
     .join(" ");
   const note = Math.max(8, Math.min(16, Math.min(box.w, box.h) * 0.28));
-  const showFlag = symbols && !heat && (lot.noMow === "Yes" || lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Unmowed");
+  const showFlag = symbols && !heat && (lot.noMow === "Yes" || lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Owe-Mow" || lot.noMow === "Unmowed");
   const flagSize = Math.max(18, Math.min(30, Math.min(box.w, box.h) * 0.375));
   let noteX = box.x + box.w - note - 2;
   let noteY = box.y + 2;
   if (showFlag) {
-    const owe = lot.noMow === "Owe" || lot.noMow === "NO-OWE";
+    const owe = lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Owe-Mow";
     const r = flagSize * 0.72;
     const flagCx = (4.4 + flagSize) / 3;
     const flagCy = (1 + flagSize * 1.06) / 3;
     const flagX = owe ? box.x + box.w - r - 3 - flagCx : box.x + box.w - flagSize - 3;
     const flagY = owe ? box.y + r + 2 - flagCy - flagSize * 0.14 : box.y + 2;
-    noteX = flagX - note - 2;
-    noteY = flagY;
+    noteX = flagX + flagSize - note;
+    noteY = flagY + flagSize + 2;
   }
   return (
     <g
@@ -900,11 +897,11 @@ const LotBox = memo(function LotBox({
       {marked ? (
         <rect data-lot-id={lot.id} x={noteX} y={noteY} width={note} height={note} rx={1} fill="#ffe56a" stroke="#1c1916" strokeWidth={1} transform={`rotate(-8 ${noteX + note / 2} ${noteY + note / 2})`} />
       ) : null}
-      {symbols && !heat && (lot.noMow === "Yes" || lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Unmowed") ? (
+      {symbols && !heat && (lot.noMow === "Yes" || lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Owe-Mow" || lot.noMow === "Unmowed") ? (
         <g pointerEvents="none">
           {(() => {
             const s = Math.max(18, Math.min(30, Math.min(box.w, box.h) * 0.375));
-            const owe = lot.noMow === "Owe" || lot.noMow === "NO-OWE";
+            const owe = lot.noMow === "Owe" || lot.noMow === "NO-OWE" || lot.noMow === "Owe-Mow";
             const unmowed = lot.noMow === "Unmowed";
             const r = s * 0.72;
             const cx = box.x + box.w - r - 3;
@@ -993,8 +990,12 @@ const LotBox = memo(function LotBox({
       )}
       {symbols && !heat && /^(yes|y)$/i.test(lot.key?.trim() ?? "") ? (
         <KeyMark
-          x={box.x + box.w - 3 - Math.min(fsLot * 0.85, box.h * 0.34)}
-          y={box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 2}
+          x={box.x + 3}
+          y={
+            lot.wiring === "Yes" || lot.wiring === "No"
+              ? box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 2
+              : box.y + box.h - 2 - Math.min(fsLot * 0.85, box.h * 0.34)
+          }
           s={Math.min(fsLot * 0.85, box.h * 0.34)}
         />
       ) : null}
@@ -1003,8 +1004,8 @@ const LotBox = memo(function LotBox({
           x={box.x + box.w - 3 - Math.min(fsLot * 0.85, box.h * 0.34)}
           y={
             /^(yes|y)$/i.test(lot.key?.trim() ?? "")
-              ? Math.max(box.y + 2, box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 3.15)
-              : box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 2
+              ? Math.max(box.y + 2, box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 2.55)
+              : box.y + box.h - 3 - Math.min(fsLot * 0.85, box.h * 0.34) * 1.15
           }
           s={Math.min(fsLot * 0.85, box.h * 0.34)}
         />
@@ -1026,9 +1027,9 @@ const LotBox = memo(function LotBox({
       ) : null}
       {symbols && !heat && (/^[1-5]$/.test(lot.guest?.trim() ?? "") || /^(yes|y)$/i.test(lot.guest?.trim() ?? "")) ? (
         <PersonMark
-          x={box.x + (box.w - Math.min(fsLot * 0.85, box.h * 0.34)) / 2}
-          y={box.y + box.h - 2 - Math.min(fsLot * 0.85, box.h * 0.34)}
-          s={Math.min(fsLot * 0.85, box.h * 0.34)}
+          x={box.x + (box.w - Math.min(fsLot * 1.05, box.h * 0.42)) / 2}
+          y={box.y + box.h - Math.min(fsLot * 1.05, box.h * 0.42)}
+          s={Math.min(fsLot * 1.05, box.h * 0.42)}
           fill={(lot.guests ?? []).length > 0 && (lot.guests ?? []).every((guest) => guest.name.trim()) ? "#1c1916" : "#ff5a00"}
         />
       ) : null}

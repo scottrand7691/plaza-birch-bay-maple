@@ -658,6 +658,35 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
     const fromNotes = noteTasksFromLots(lots).filter((task) => !saved.has(task.id) && !dismissedNotes.has(task.id) && !hiddenTasks.has(task.id));
     return [...fromNotes, ...tasks.filter((task) => !hiddenTasks.has(task.id))];
   }, [lots, tasks, dismissedNotes, hiddenTasks]);
+  const [board, setBoard] = useState<BoardNote[]>(() => (typeof window === "undefined" ? [] : loadBoard()));
+  function removeSticky(task: BusinessTask, id: string) {
+    eraseTaskSticky(id);
+    dismissSticky(id);
+    const nextBoard = loadBoard().filter((note) => note.id !== id);
+    setBoard(nextBoard);
+    try {
+      localStorage.setItem(BOARD_KEY, JSON.stringify(nextBoard));
+    } catch {
+      /* the on-screen list is already updated */
+    }
+    void saveBoard({ data: { board: nextBoard } }).catch(() => {});
+    if (task.notes.includes(id)) {
+      const notesText = task.notes.split("\n").filter((line) => !line.includes(id)).join("\n").trim();
+      const next = { ...task, notes: notesText };
+      setTasks((current) => current.map((item) => (item.id === task.id ? next : item)));
+      void saveBusinessTask({ data: { task: next, action: "Updated" } }).catch(() => {});
+    }
+  }
+  useEffect(() => {
+    const refresh = () => setBoard(loadBoard());
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -878,7 +907,7 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
       <div className="business-form-actions"><button className="business-secondary" type="button" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</button><button className="business-primary" type="submit" disabled={saving}>{saving ? "Saving…" : editingId ? "Save changes" : "Save task"}</button></div>
     </form> : null}
     {loading ? <div className="business-empty"><h3>Loading your shared task register</h3><p>Checking the shared database…</p></div> : filtered.length ? <div className="business-task-list">{filtered.map((task) => { const days = businessDays(task.dueDate); const followDays = businessDays(task.followUp); const dueLabel = days === null ? "No due date" : days < 0 ? Math.abs(days) + "d overdue" : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days"; return <article className={"business-task " + (task.status === "Completed" ? "task-completed" : "")} key={task.id}>
-      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim() ? <p className="business-task-notes">{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim()}</p> : null}{(loadTaskStickies()[task.id] ?? []).map((sticky) => <p className="business-task-notes task-sticky" key={sticky.id} style={{ background: sticky.color }}>{sticky.text}</p>)}
+      <div className="business-task-main"><span className="business-category">{task.category}</span><h4>{task.title}</h4><div className="business-task-meta">{task.owner ? <span>Owner: {task.owner}</span> : null}{task.reference ? <span>Ref: {task.reference}</span> : null}{task.cost ? <span>{"Fee: $" + task.cost}</span> : null}{task.followUp ? <span>Follow-up: {task.followUp}{followDays !== null && followDays <= 0 && task.status !== "Completed" ? " · due now" : ""}</span> : null}</div>{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim() ? <p className="business-task-notes">{task.notes.replace(/\[\[sticky:[^\]]+\]\]/g, "").trim()}</p> : null}{[...(loadTaskStickies()[task.id] ?? []), ...board.filter((note) => note.kind === "pin" && note.pin === `task:${task.id}`).map((note) => ({ id: note.id, text: note.text, color: note.color }))].filter((sticky, index, list) => !loadDismissedStickies().has(sticky.id) && list.findIndex((item) => item.id === sticky.id) === index).map((sticky) => <p className="business-task-notes task-sticky" key={sticky.id} style={{ background: sticky.color }}>{sticky.text}<button type="button" aria-label="Remove sticky" onClick={() => removeSticky(task, sticky.id)}>×</button></p>)}
         <div className="business-inline-actions"><button className="business-secondary" type="button" onClick={() => void toggleAttachments(task.id)}>{expandedAttachments[task.id] ? "Hide documents" : "Documents (" + (attachments[task.id]?.length ?? "…") + ")"}</button><button className="business-secondary" type="button" onClick={() => void toggleHistory(task.id)}>{expandedHistory[task.id] ? "Hide history" : "Change history"}</button></div>
         {expandedAttachments[task.id] ? <div className="business-detail-panel"><label className="business-field">Attach PDF or image (max 3 MB)<input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void uploadAttachment(task, file); }} /></label>{(attachments[task.id] ?? []).map((item) => <div className="business-attachment" key={item.id}><span>{item.name} · {(item.size / 1024).toFixed(0)} KB</span><button className="business-secondary" type="button" onClick={() => void downloadAttachment(item)}>Download</button><button className="business-delete" type="button" onClick={() => void removeAttachment(task.id, item.id)}>Remove</button></div>)}</div> : null}
         {expandedHistory[task.id] ? <div className="business-detail-panel"><h5>Recent changes</h5>{(history[task.id] ?? []).length ? (history[task.id] ?? []).map((entry) => <div className="business-history-entry" key={entry.id}><strong>{entry.action}</strong><span>{new Date(entry.changedAt).toLocaleString()}</span><small>{entry.snapshot.title || "Task record"}</small></div>) : <p>No change history available.</p>}</div> : null}
@@ -886,7 +915,14 @@ function BusinessBoard({ lots }: { lots: Lot[] }) {
       <div className="business-task-actions"><div className={"business-due " + (days !== null && days < 0 && task.status !== "Completed" ? "due-overdue" : days !== null && days <= 7 && task.status !== "Completed" ? "due-soon" : "")}>{task.status === "Completed" ? "Completed" : dueLabel}</div><button className="business-secondary" type="button" onClick={() => beginEdit(task)}>Edit</button><select aria-label={"Status for " + task.title} value={task.status} onChange={(event) => void changeStatus(task, event.target.value)}>{BUSINESS_STATUSES.map((item) => <option key={item}>{item}</option>)}</select>{confirmId === task.id ? <span className="remove-confirm"><span>Are you sure?</span><button className="business-primary" type="button" onClick={() => void removeTask(task)}>Confirm</button><button className="business-secondary" type="button" onClick={() => setConfirmId(null)}>Cancel</button></span> : <button className="business-delete" type="button" onClick={() => setConfirmId(task.id)} aria-label={"Delete " + task.title}>Remove</button>}</div>
     </article>; })}</div> : <div className="business-empty"><div className="business-empty-icon">✓</div><h3>{tasks.length ? "No matching tasks" : "Your business task list is ready"}</h3><p>{tasks.length ? "Try another search or filter." : "Add a license renewal, vehicle registration, title transfer, or follow-up to start tracking deadlines."}</p>{!tasks.length ? <button className="business-primary" type="button" onClick={() => setShowForm(true)}>+ Add your first task</button> : <button className="business-secondary" type="button" onClick={() => { setSearch(""); setFilter("All"); }}>Clear filters</button>}</div>}
     <BillsBoard onChange={setParkBills}>
-      <BusinessCalendar tasks={boardTasks} bills={parkBills} />
+      <BusinessCalendar
+        tasks={[
+          ...boardTasks,
+          ...board.filter((note) => note.kind === "reminder" && note.when).map((note) => ({ id: note.id, title: note.text, category: "Other", dueDate: note.when, followUp: "", status: "Open", owner: "", cost: "", reference: "", notes: note.text })),
+        ]}
+        bills={parkBills}
+        pins={board.filter((note) => note.kind === "pin" && note.pin?.startsWith("date:"))}
+      />
     </BillsBoard>
     <p className="business-storage-note">Tasks, change history, and attachments are stored in the shared database and scoped to the signed-in account. Due-date reminders appear in this workspace; external email or push notifications require a separately configured delivery provider.</p>
   </div>;
@@ -896,7 +932,23 @@ type BoardNote = { id: string; kind: "message" | "sticky" | "reminder" | "pin"; 
 
 const BOARD_KEY = "magnolia-meeting-board";
 const TASK_STICKY_KEY = "magnolia-task-stickies";
+const DISMISSED_STICKY_KEY = "magnolia-dismissed-stickies";
 type TaskSticky = { id: string; text: string; color: string };
+
+function loadDismissedStickies(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISSED_STICKY_KEY) ?? "[]") as unknown;
+    return new Set(Array.isArray(raw) ? raw.filter((id) => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function dismissSticky(id: string) {
+  const next = loadDismissedStickies();
+  next.add(id);
+  localStorage.setItem(DISMISSED_STICKY_KEY, JSON.stringify([...next]));
+}
 
 function loadTaskStickies(): Record<string, TaskSticky[]> {
   try {
@@ -1037,9 +1089,10 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
         const saved = Array.isArray(book?.board) ? (book.board as BoardNote[]) : [];
         if (saved.length) {
           setNotes((current) => {
+            const gone = loadDismissedStickies();
             const map = new Map<string, BoardNote>();
-            for (const item of saved) if (item && typeof item.text === "string") map.set(item.id, item);
-            for (const item of current) if (item && typeof item.text === "string") map.set(item.id, item);
+            for (const item of saved) if (item && typeof item.text === "string" && !gone.has(item.id)) map.set(item.id, item);
+            for (const item of current) if (item && typeof item.text === "string" && !gone.has(item.id)) map.set(item.id, item);
             return [...map.values()];
           });
         }
@@ -1103,24 +1156,26 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
   useEffect(() => {
     if (!ready) return;
     setNotes((current) => {
+      const gone = loadDismissedStickies();
       const have = new Set(current.map((item) => item.id));
       const extra: BoardNote[] = [];
       for (const lot of lots) {
         for (const sticky of lot.stickies ?? []) {
-          if (!have.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `todo:${lot.id}` });
+          if (!have.has(sticky.id) && !gone.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `todo:${lot.id}` });
         }
       }
       for (const task of biz) {
         for (const sticky of taskStickyNotes(task)) {
-          if (!have.has(sticky.id)) extra.push(sticky);
+          if (!have.has(sticky.id) && !gone.has(sticky.id)) extra.push(sticky);
         }
       }
       for (const [taskId, stickies] of Object.entries(loadTaskStickies())) {
         for (const sticky of stickies) {
-          if (!have.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `task:${taskId}` });
+          if (!have.has(sticky.id) && !gone.has(sticky.id)) extra.push({ id: sticky.id, kind: "pin", text: sticky.text, when: "", color: sticky.color, pin: `task:${taskId}` });
         }
       }
-      return extra.length ? [...extra, ...current] : current;
+      const kept = current.filter((item) => !gone.has(item.id));
+      return extra.length || kept.length !== current.length ? [...extra, ...kept] : current;
     });
   }, [lots, biz, ready]);
   function add(kind: BoardNote["kind"]) {
@@ -1335,10 +1390,12 @@ function MeetingBoard({ lots, onOpen, onSave }: { lots: Lot[]; onOpen: (id: stri
             })}
           </section>
           <div className="message-float meeting-tile" data-resize="messages">
-            <h3>Message Board</h3>
-            {messages.length > 2 ? (
-              <button type="button" className="message-all" onClick={() => setMessagesOpen((open) => !open)}>{messagesOpen ? "Show latest" : "All messages"}</button>
-            ) : null}
+            <div className="message-head">
+              <h3>Message Board</h3>
+              {messages.length > 2 ? (
+                <button type="button" className="message-all" onClick={() => setMessagesOpen((open) => !open)}>{messagesOpen ? "Show latest" : "All messages"}</button>
+              ) : null}
+            </div>
             {messages.length ? (
               <ul className="meeting-messages">
                 {(messagesOpen ? messages : messages.slice(0, 2)).map((note, index) => (
@@ -1784,6 +1841,9 @@ function Home() {
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
   const [symbols, setSymbols] = useState(false);
+  const [dark, setDark] = useState(() => typeof window !== "undefined" && localStorage.getItem("magnolia-theme") === "dark");
+  const [logoSrc, setLogoSrc] = useState(() => (typeof window === "undefined" ? "/logo.jpg" : localStorage.getItem("magnolia-logo") || "/logo.jpg"));
+  const logoRef = useRef<HTMLInputElement>(null);
   const [device, setDevice] = useState<keyof typeof DEVICE_LINKS | null>(null);
   const [deviceUrl, setDeviceUrl] = useState("");
   const [alarmOn, setAlarmOn] = useState(false);
@@ -1799,6 +1859,15 @@ function Home() {
   const dirtyRef = useRef(false);
   const masterReady = useRef(false);
   const mapReady = useRef(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    try {
+      localStorage.setItem("magnolia-theme", dark ? "dark" : "light");
+    } catch {
+      /* the toggle still flips this session */
+    }
+  }, [dark]);
 
   useEffect(() => {
     try {
@@ -1894,15 +1963,15 @@ function Home() {
 
   function saveLot(next: Lot) {
     const prevLot = lotsRef.current.find((item) => item.id === next.id);
-    const parkRate = lotsRef.current.find((item) => item.status === "Occupied" && (item.lotRent ?? "").trim())?.lotRent?.trim() || "540";
-    const draft = next.status === "Occupied" && !(next.lotRent ?? "").trim() ? { ...next, lotRent: parkRate } : next;
+    const parkRate = lotsRef.current.find((item) => !isOutsideLot(item) && item.status === "Occupied" && (item.lotRent ?? "").trim())?.lotRent?.trim() || "540";
+    const draft = !isOutsideLot(next) && next.status === "Occupied" && !(next.lotRent ?? "").trim() ? { ...next, lotRent: parkRate } : next;
     const lotRentChanged = Boolean(prevLot && (prevLot.lotRent ?? "").trim() && draft.status === "Occupied" && (prevLot.lotRent ?? "") !== (draft.lotRent ?? ""));
     const totalOnly = Boolean(prevLot && prevLot.rent !== draft.rent && (prevLot.homeRent ?? "") === (draft.homeRent ?? "") && !lotRentChanged);
     const edited = withEmptyMow(totalOnly ? { ...draft, homeRent: rentGap(draft.rent, draft.lotRent ?? "", petFee(draft.dogs, draft.cats)) } : draft);
     dirtyRef.current = true;
     setLots((prev) => {
       const nextLots = prev.map((item) => {
-        if (lotRentChanged && item.status === "Occupied") return withEmptyMow({ ...item, ...(item.id === edited.id ? edited : {}), lotRent: edited.lotRent ?? "" });
+        if (lotRentChanged && item.status === "Occupied" && !isOutsideLot(item)) return withEmptyMow({ ...item, ...(item.id === edited.id ? edited : {}), lotRent: edited.lotRent ?? "" });
         return item.id === edited.id ? edited : item;
       });
       lotsRef.current = nextLots;
@@ -1990,27 +2059,28 @@ function Home() {
 
   const visibleIds = useMemo(() => new Set(visible.map((lot) => lot.id)), [visible]);
   const lot = lots.find((item) => item.id === selected) ?? null;
-  const empty = useMemo(() => lots.reduce((n, item) => n + (item.status === "Empty" ? 1 : 0), 0), [lots]);
-  const occupied = useMemo(() => lots.reduce((n, item) => n + (item.status === "Occupied" ? 1 : 0), 0), [lots]);
-  const pastDue = useMemo(() => lots.reduce((n, item) => n + (matchesFilter(item, "past-due") ? 1 : 0), 0), [lots]);
-  const notes = useMemo(() => lots.reduce((n, item) => n + (item.issues.trim() ? 1 : 0), 0), [lots]);
   const mapLabel = main ? "Main" : SHEET_COPY[sheet].title;
-  const filterNames = (
+  const filterGroups = (
     [
-      ["empty", "Empty"],
-      ["occupied", "Occupied"],
-      ["issues", "Issues"],
-      ["renters", "Renters"],
-      ["owners", "Owners"],
-      ["no-owe", "NO-OWE"],
-      ["due", "Rent due"],
-      ["past-due", "Past due"],
-      ["roof", "Needs roof"],
-      ["pets", "Pets"],
-      ["wiring", "Wiring"],
-      ["lease-ending", "Lease ending"],
+      ["Status", [
+        ["empty", "Empty"],
+        ["occupied", "Occupied"],
+        ["renters", "Renters"],
+        ["owners", "Owners"],
+      ]],
+      ["Property", [
+        ["issues", "Issues"],
+        ["due", "Rent due"],
+        ["past-due", "Past due"],
+        ["roof", "Needs roof"],
+        ["pets", "Pets"],
+        ["wiring", "Wiring"],
+        ["no-owe", "Owe-Mow"],
+        ["lease-ending", "Lease ending"],
+      ]],
     ] as const
   );
+  const filterNames = filterGroups.flatMap(([, items]) => items);
   const filterLabel = filter.length === 0 ? "" : filter.length === 1 ? filterNames.find(([id]) => id === filter[0])?.[1] ?? "" : `${filter.length} on`;
   const narrowed = query.trim() !== "" || filter.length > 0;
 
@@ -2039,7 +2109,7 @@ function Home() {
   }, [mapsOpen, filtersOpen, dataOpen]);
 
   return (
-    <main className="app">
+    <main className="app" data-theme={dark ? "dark" : "light"}>
       <svg className="icon-defs" width="0" height="0" aria-hidden="true">
         <defs>
           <pattern id="maintStripes" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -2127,23 +2197,40 @@ function Home() {
         </form>
       ) : null}
       <header className="top">
-        <div className="brand">
-          <h1>Magnolia Central of Florida Estates</h1>
-          <p className="stats">
-            <button type="button" className="stat-chip" onClick={() => { setFilter([]); setView("map"); }}><b>{lots.length}</b> lots</button>
-            <button type="button" className="stat-chip" onClick={() => { setFilter(["occupied"]); setView("map"); }}><b>{occupied}</b> occupied</button>
-            <button type="button" className="stat-chip" onClick={() => { setFilter(["empty"]); setView("map"); }}><b>{empty}</b> empty</button>
-            <button type="button" className="stat-chip" onClick={() => { setFilter(["issues"]); setView("map"); }}><b>{notes}</b> notes</button>
-            <button type="button" className="stat-chip" onClick={() => { setFilter(["past-due"]); setView("map"); }}><b>{pastDue}</b> past due</button>
-          </p>
+        <div className="top-tools">
+          <input
+            className="search"
+            value={query}
+            placeholder="Lot, name, or address"
+            aria-label="Search lots"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <h1 className="brand-mark">
+            <button type="button" className="logo-upload" aria-label="Upload logo" onClick={() => logoRef.current?.click()}>
+              <img src={logoSrc} alt="" />
+            </button>
+            <input
+              ref={logoRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const data = String(reader.result ?? "");
+                  if (!data) return;
+                  setLogoSrc(data);
+                  try { localStorage.setItem("magnolia-logo", data); } catch { /* keep the new logo for this session */ }
+                };
+                reader.readAsDataURL(file);
+                event.target.value = "";
+              }}
+            />
+            Magnolia Estates
+          </h1>
         </div>
-        <input
-          className="search"
-          value={query}
-          placeholder="Lot, name, or address"
-          aria-label="Search lots"
-          onChange={(e) => setQuery(e.target.value)}
-        />
       </header>
       <div className="toolbar">
         <div className="tabs" role="tablist" aria-label="Sections">
@@ -2217,18 +2304,23 @@ function Home() {
             </button>
             {filtersOpen ? (
               <div className="map-drop filter-checks" role="group" aria-label="Map filters">
-                {filterNames.map(([id, label]) => (
-                  <label key={id}>
-                    <input
-                      type="checkbox"
-                      checked={filter.includes(id)}
-                      onChange={() => {
-                        setFilter((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
-                        setView("map");
-                      }}
-                    />
-                    {label}
-                  </label>
+                {filterGroups.map(([group, items]) => (
+                  <div key={group} className="filter-group">
+                    <p>{group}</p>
+                    {items.map(([id, label]) => (
+                      <label key={id}>
+                        <input
+                          type="checkbox"
+                          checked={filter.includes(id)}
+                          onChange={() => {
+                            setFilter((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+                            setView("map");
+                          }}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
                 ))}
               </div>
             ) : null}
@@ -2249,6 +2341,9 @@ function Home() {
           ))}
           <button className="tab tab-end" type="button" role="tab" aria-pressed={view === "register"} onClick={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("register"); }}>
             Register
+          </button>
+          <button className="theme-toggle" type="button" aria-pressed={dark} onClick={() => setDark((on) => !on)}>
+            {dark ? "Light" : "Dark"}
           </button>
         </div>
         {narrowed ? (
@@ -2281,6 +2376,36 @@ function Home() {
             >
               Clear
             </button>
+          </div>
+        ) : null}
+        {view === "map" ? (
+          <div className={legendOn ? "legend legend-bar" : "legend legend-bar is-collapsed"}>
+            {legendOn ? (
+              <>
+                <span><i className="swatch" /> Occupied</span>
+                <span><i className="swatch empty" /> Empty</span>
+                <span><i className="swatch open" /> Office</span>
+                <span><i className="swatch notes" /> Issues</span>
+                <span><i className="swatch mow-flag" aria-hidden="true" /> Mow</span>
+                <span><i className="swatch late" /> Late</span>
+                <span><i className="swatch leak" /> Leak</span>
+                <span><i className="swatch roof" /> Roof</span>
+                <span><i className="swatch maint" /> Maint</span>
+                <span><i className="swatch eviction" /> Eviction</span>
+              </>
+            ) : null}
+            {symbols ? (
+              <span className="symbol-key">
+                <i className="swatch mow-flag" /> mow
+                <i className="swatch unmowed-flag" /> unmowed
+                <i className="swatch spray" /> needs wash
+                <i className="swatch sticky-note" /> sticky
+                <i className="swatch key-mark" /> key
+                <i className="swatch guest-mark" /> guest
+              </span>
+            ) : null}
+            <button className="legend-hide" type="button" aria-pressed={symbols} onClick={() => setSymbols((on) => !on)}>Symbols</button>
+            <button className="legend-hide legend-arrow" type="button" aria-label={legendOn ? "Hide legend" : "Show legend"} onClick={() => setLegendOn((on) => !on)}>{legendOn ? "↑" : "↓"}</button>
           </div>
         ) : null}
         {view === "register" ? (
@@ -2406,55 +2531,6 @@ function Home() {
       </div>
       <div className={view === "meeting" || view === "business" ? "stage stage-full" : "stage"}>
         <section className="map-frame">
-          {view === "map" && legendOn ? (
-            <div className="legend">
-              <span>
-                <i className="swatch" /> Occupied
-              </span>
-              <span>
-                <i className="swatch empty" /> Empty
-              </span>
-              <span>
-                <i className="swatch open" /> Office
-              </span>
-              <span>
-                <i className="swatch notes" /> Issues
-              </span>
-              <span>
-                <i className="swatch mow-flag" aria-hidden="true" /> Mow
-              </span>
-              <span>
-                <i className="swatch late" /> Late rent
-              </span>
-              <span>
-                <i className="swatch leak" /> Leak
-              </span>
-              <span>
-                <i className="swatch roof" /> Needs roof
-              </span>
-              <span>
-                <i className="swatch maint" /> Maintenance
-              </span>
-              <span>
-                <i className="swatch eviction" /> Eviction
-              </span>
-              <button className="legend-hide" type="button" aria-pressed={symbols} onClick={() => setSymbols((on) => !on)}>
-                Symbols
-              </button>
-              <button className="legend-hide legend-arrow" type="button" aria-label="Hide legend" onClick={() => setLegendOn(false)}>
-                ↑
-              </button>
-            </div>
-          ) : view === "map" ? (
-            <div className="legend">
-              <button className="legend-show legend-arrow" type="button" aria-label="Show legend" onClick={() => setLegendOn(true)}>
-                ↓
-              </button>
-              <button className="legend-show" type="button" aria-pressed={symbols} onClick={() => setSymbols((on) => !on)}>
-                Symbols
-              </button>
-            </div>
-          ) : null}
           <div className="map-scroll">
           {!hydrated ? (
             <p className="qb-note">Loading saved lots…</p>
@@ -2476,14 +2552,25 @@ function Home() {
           ) : view === "meeting" ? (
             <MeetingBoard lots={lots} onOpen={openLot} onSave={saveLot} />
           ) : view === "register" ? (
-            <RegisterTable
-              lots={registerMode === "short" ? [...lots].sort(byStreetAddress) : lots}
-              columns={registerMode === "homes" ? HOME_COLUMNS : registerMode === "full" ? REGISTER_COLUMNS : SHORT_COLUMNS}
-              visibleIds={visibleIds}
-              selected={selected}
-              onChoose={choose}
-              onSave={saveLot}
-            />
+            <>
+              <RegisterTable
+                lots={[...lots].filter((lot) => !isOutsideLot(lot)).sort(parkLotOrder)}
+                columns={registerMode === "homes" ? HOME_COLUMNS : registerMode === "full" ? REGISTER_COLUMNS : SHORT_COLUMNS}
+                visibleIds={visibleIds}
+                selected={selected}
+                onChoose={choose}
+                onSave={saveLot}
+              />
+              <h2 className="outside-lots-title">Outside Lots</h2>
+              <RegisterTable
+                lots={[...lots].filter(isOutsideLot).sort(outsideLotOrder)}
+                columns={registerMode === "homes" ? HOME_COLUMNS : registerMode === "full" ? REGISTER_COLUMNS : SHORT_COLUMNS}
+                visibleIds={visibleIds}
+                selected={selected}
+                onChoose={choose}
+                onSave={saveLot}
+              />
+            </>
           ) : main ? (
             <div className="map-stack">
               {([1, 2, 3] as const).map((id) => (
@@ -2559,6 +2646,7 @@ function Home() {
           onOpen={openLot}
           onRentRoll={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("increase"); }}
           onAlert={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView("alert"); }}
+          focusTab={view === "todo" ? "notes" : view === "mow" ? "maintenance" : view === "heat" ? "rent" : undefined}
         />
         )}
       </div>
@@ -2731,7 +2819,7 @@ function registerText(item: Lot, col: RegisterCol): string {
     return raw !== "" && raw !== "no" ? "Yes" : "";
   }
   if (col.kind === "status") return item.status;
-  if (col.kind === "mow") return item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" || item.noMow === "Unmowed" ? item.noMow : "";
+  if (col.kind === "mow") return item.noMow === "Owe" || item.noMow === "NO-OWE" ? "Owe-Mow" : item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe-Mow" || item.noMow === "Unmowed" ? item.noMow : "";
   if (col.kind === "first" || col.kind === "last") {
     const parts = nameParts(item.name);
     return col.kind === "first" ? parts.first : parts.last;
@@ -2814,13 +2902,13 @@ const RegisterCell = memo(function RegisterCell({
       <td onClick={stop}>
         <select
           className="cell-edit"
-          value={item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe" || item.noMow === "Unmowed" ? item.noMow : ""}
+          value={item.noMow === "Yes" || item.noMow === "No" || item.noMow === "Owe-Mow" || item.noMow === "Owe" || item.noMow === "NO-OWE" || item.noMow === "Unmowed" ? (item.noMow === "Owe" || item.noMow === "NO-OWE" ? "Owe-Mow" : item.noMow) : ""}
           onChange={(e) => onSave({ ...item, noMow: e.target.value })}
         >
           <option value="">—</option>
           <option>Yes</option>
           <option>No</option>
-          <option>Owe</option>
+          <option>Owe-Mow</option>
           <option>Unmowed</option>
         </select>
       </td>
@@ -3002,6 +3090,22 @@ function neighbors(lots: Lot[], lot: Lot) {
   };
 }
 
+function isOutsideLot(lot: Lot) {
+  return lot.id === "4053-Bonnie Drive" || lot.id === "1471-Lake Drive" || lot.id === "3530-Magnolia Terrace Ave" || /\(outside park\)/i.test(lot.lot);
+}
+
+function parkLotOrder(a: Lot, b: Lot) {
+  const aEnd = a.id === "130.5" ? 1 : 0;
+  const bEnd = b.id === "130.5" ? 1 : 0;
+  if (aEnd !== bEnd) return aEnd - bEnd;
+  return byStreetAddress(a, b);
+}
+
+function outsideLotOrder(a: Lot, b: Lot) {
+  const rank = (lot: Lot) => (lot.address === "4053" ? 0 : lot.address === "1471" ? 1 : lot.address === "3530" ? 2 : 3);
+  return rank(a) - rank(b) || a.address.localeCompare(b.address, undefined, { numeric: true });
+}
+
 function byStreetAddress(a: Lot, b: Lot) {
   const ga = streetGroup(a.street);
   const gb = streetGroup(b.street);
@@ -3074,7 +3178,7 @@ function RegisterTable({
   );
 }
 
-function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot | null; lots: Lot[]; onSave: (next: Lot) => void; onOpen: (id: string) => void; onRentRoll: () => void; onAlert: () => void }) {
+function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert, focusTab }: { lot: Lot | null; lots: Lot[]; onSave: (next: Lot) => void; onOpen: (id: string) => void; onRentRoll: () => void; onAlert: () => void; focusTab?: "personal" | "home" | "rent" | "maintenance" | "notes" | "empty" }) {
   const [tab, setTab] = useState<"personal" | "home" | "rent" | "maintenance" | "notes" | "empty">("personal");
   const [copied, setCopied] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -3082,14 +3186,27 @@ function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot
   const seenLot = useRef(lot?.id);
 
   useEffect(() => {
-    if (lot && tab === "empty" && lot.status !== "Empty") setTab("personal");
-  }, [lot?.id, lot?.status, tab]);
+    if (focusTab) setTab(focusTab);
+    else if (lot && tab === "empty" && lot.status !== "Empty") setTab("personal");
+  }, [lot?.id, lot?.status, focusTab]);
 
+  const focused = useRef("");
   useLayoutEffect(() => {
     const panel = panelRef.current;
     if (!panel) return;
-    if (seenLot.current !== lot?.id) {
-      seenLot.current = lot?.id;
+    const changed = seenLot.current !== lot?.id;
+    if (changed) seenLot.current = lot?.id;
+    const key = `${lot?.id ?? ""}:${focusTab ?? ""}:${tab}`;
+    if (focusTab && tab === focusTab && focused.current !== key) {
+      focused.current = key;
+      const button = panel.querySelector<HTMLElement>(`[data-tab="${focusTab}"]`);
+      const body = panel.querySelector<HTMLElement>(`[data-detail="${focusTab}"]`);
+      button?.scrollIntoView({ block: "nearest", inline: "center" });
+      body?.scrollIntoView({ block: "center" });
+      scrollRef.current = panel.scrollTop;
+      return;
+    }
+    if (changed) {
       panel.scrollTop = 0;
       scrollRef.current = 0;
       return;
@@ -3163,7 +3280,7 @@ function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot
         </label>
         <label className="head-name">
           <span>Name</span>
-          <textarea rows={2} value={lot.name} onChange={(e) => save({ name: e.target.value })} />
+          <textarea rows={1} value={lot.name} onChange={(e) => save({ name: e.target.value })} />
         </label>
         <NameSplit name={lot.name} onChange={(name) => save({ name })} />
         <label className="head-status">
@@ -3210,7 +3327,7 @@ function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot
         ).map(([id, label]) => {
           const mark = (id === "rent" && rentMark) || (id === "notes" && notesMark);
           return (
-            <button key={id} type="button" role="tab" aria-pressed={tab === id} onClick={() => setTab(id)}>
+            <button key={id} type="button" role="tab" data-tab={id} aria-pressed={tab === id} onClick={() => setTab(id)}>
               {label}
               {mark ? <i className="tab-dot" aria-label="Has something to see" /> : null}
             </button>
@@ -3339,13 +3456,17 @@ function LotPanel({ lot, lots, onSave, onOpen, onRentRoll, onAlert }: { lot: Lot
         </>
       ) : null}
       {tab === "rent" ? (
-        <LotExtras values={lot} part="rent" onChange={save} onMoveOut={() => { onSave(moveOutLot(lot)); setTab("empty"); }} onRentRoll={onRentRoll} />
+        <div data-detail="rent">
+          <LotExtras values={lot} part="rent" onChange={save} onMoveOut={() => { onSave(moveOutLot(lot)); setTab("empty"); }} onRentRoll={onRentRoll} />
+        </div>
       ) : null}
       {tab === "maintenance" ? (
-        <LotExtras values={lot} part="maintenance" onChange={save} />
+        <div data-detail="maintenance">
+          <LotExtras values={lot} part="maintenance" onChange={save} />
+        </div>
       ) : null}
       {tab === "notes" ? (
-        <div className="pet-block">
+        <div className="pet-block" data-detail="notes">
           <p className="pet-title">Issues</p>
           <label className="wiring-field">
             <span>Note</span>
@@ -3905,7 +4026,52 @@ function groupTodos<T extends { street: string }>(items: T[]) {
   return [...groups.entries()].sort((a, b) => a[1].rank - b[1].rank || a[0].localeCompare(b[0]));
 }
 function TodoBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void }) {
-  const items = buildTodo(lots);
+  const [board, setBoard] = useState<BoardNote[]>(() => (typeof window === "undefined" ? [] : loadBoard()));
+  useEffect(() => {
+    const refresh = () => setBoard(loadBoard());
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  const items = useMemo(() => {
+    const base = buildTodo(lots);
+    const have = new Set(base.map((item) => item.id));
+    const extra = board
+      .filter((note) => (note.kind === "sticky" || note.kind === "pin") && note.text.trim() && (!note.pin || note.pin === "board:meeting"))
+      .map((note) => ({
+        id: `board-${note.id}`,
+        lot: "",
+        address: "",
+        street: "",
+        name: "Meeting",
+        notes: note.text,
+        text: "Sticky note",
+        date: "",
+      }));
+    return [...base, ...extra.filter((item) => !have.has(item.id))];
+  }, [lots, board]);
+  const stickies = useMemo(() => {
+    const map: Record<string, { id: string; text: string; color: string }[]> = {};
+    const add = (id: string, sticky: { id: string; text: string; color: string }) => {
+      const list = map[id] ?? [];
+      if (list.some((item) => item.id === sticky.id || item.text.trim().toLowerCase() === sticky.text.trim().toLowerCase())) return;
+      map[id] = [...list, sticky];
+    };
+    for (const lot of lots) {
+      for (const sticky of lot.stickies ?? []) add(lot.id, sticky);
+    }
+    for (const note of board) {
+      if (note.kind !== "pin" || !note.pin) continue;
+      const lotId = note.pin.startsWith("todo:") ? note.pin.slice(5) : note.pin.startsWith("lot:") ? note.pin.slice(4) : "";
+      if (lotId) add(lotId, { id: note.id, text: note.text, color: note.color });
+      if (!note.pin || note.pin === "board:meeting") add(`board-${note.id}`, { id: note.id, text: note.text, color: note.color });
+    }
+    return map;
+  }, [lots, board]);
   const [done, setDone] = useState<Set<string>>(() => new Set());
   const [rank, setRank] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -3965,36 +4131,41 @@ function TodoBoard({ lots, onOpen }: { lots: Lot[]; onOpen: (id: string) => void
       return next;
     });
   }
-  const [todoFilter, setTodoFilter] = useState<"open" | "done">("open");
   const openItems = items.filter((item) => !done.has(item.id));
-  const doneItems = items.filter((item) => done.has(item.id));
-  const shown = [...(todoFilter === "open" ? openItems : doneItems)].sort((a, b) => (rank[b.id] ?? 0) - (rank[a.id] ?? 0));
+  const doneItems = [...items.filter((item) => done.has(item.id))].sort((a, b) => (rank[b.id] ?? 0) - (rank[a.id] ?? 0));
+  const shown = [...openItems].sort((a, b) => (rank[b.id] ?? 0) - (rank[a.id] ?? 0));
   return (
     <div className="todo">
       <div className="todo-head">
         <h2>By notes</h2>
         <div className="seg">
-          <button className="filter" type="button" aria-pressed={todoFilter === "open"} onClick={() => setTodoFilter("open")}>
+          <button className="filter" type="button" aria-pressed>
             Open{openItems.length ? ` ${openItems.length}` : ""}
           </button>
-          <button className="filter" type="button" aria-pressed={todoFilter === "done"} onClick={() => setTodoFilter("done")}>
+          <button className="filter" type="button" aria-pressed={false} onClick={() => document.getElementById("todo-completed")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
             Done{doneItems.length ? ` ${doneItems.length}` : ""}
           </button>
         </div>
-        <button className="print-map" type="button" onClick={() => printTodo(shown.map((item) => ({ ...item, done: done.has(item.id) })))}>
+        <button className="print-map" type="button" onClick={() => printTodo([...shown, ...doneItems].map((item) => ({ ...item, done: done.has(item.id) })))}>
           Print
         </button>
       </div>
       {shown.length === 0 ? (
-        <p className="todo-empty">{todoFilter === "done" ? "Nothing checked off." : "Nothing open."}</p>
+        <p className="todo-empty">Nothing open.</p>
       ) : (
         noteBands(shown).map(([label, group]) => (
           <section key={label}>
             <h3>{label}</h3>
-            <TodoList items={group} done={done} onToggle={toggle} onShift={(id, dir) => shift(id, dir, group)} onOpen={onOpen} empty="" />
+            <TodoList items={group} done={done} onToggle={toggle} onShift={(id, dir) => shift(id, dir, group)} onOpen={onOpen} empty="" stickies={stickies} />
           </section>
         ))
       )}
+      {doneItems.length ? (
+        <section id="todo-completed" className="todo-completed">
+          <h3>Completed</h3>
+          <TodoList items={doneItems} done={done} onToggle={toggle} onShift={(id, dir) => shift(id, dir, doneItems)} onOpen={onOpen} empty="" stickies={stickies} />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -4507,6 +4678,7 @@ function TodoList({
   onShift,
   onOpen,
   empty,
+  stickies = {},
 }: {
   items: { id: string; lot: string; address: string; name: string; notes: string; text: string; date: string }[];
   done: Set<string>;
@@ -4514,12 +4686,14 @@ function TodoList({
   onShift: (id: string, dir: -1 | 1) => void;
   onOpen: (id: string) => void;
   empty: string;
+  stickies?: Record<string, { id: string; text: string; color: string }[]>;
 }) {
   if (items.length === 0) return <p className="todo-empty">{empty}</p>;
   return (
     <ul>
       {items.map((item, index) => {
         const checked = done.has(item.id);
+        const pins = stickies[item.id] ?? [];
         return (
           <li key={item.id} className={checked ? "done" : ""}>
             <div className="todo-controls">
@@ -4538,6 +4712,13 @@ function TodoList({
               <span><b>Name</b> {item.name || "—"}</span>
               {item.text ? <span><b>Due</b> {item.text}</span> : null}
               <em><b>Notes</b> {item.notes || "—"}</em>
+              {pins.length ? (
+                <span className="todo-stickies">
+                  {pins.map((sticky) => (
+                    <i key={sticky.id} className="task-sticky" style={{ background: sticky.color || "#ffe56a" }}>{sticky.text}</i>
+                  ))}
+                </span>
+              ) : null}
             </button>
           </li>
         );
@@ -4684,11 +4865,11 @@ function LotExtras({
         <p className="pet-title">MOW</p>
         <label className="wiring-field">
           <span>MOW</span>
-          <select className="mow-select" value={values.noMow === "Yes" || values.noMow === "No" || values.noMow === "Owe" || values.noMow === "Unmowed" ? values.noMow : ""} onChange={(e) => onChange({ noMow: e.target.value })}>
+          <select className="mow-select" value={values.noMow === "Yes" || values.noMow === "No" || values.noMow === "Owe-Mow" || values.noMow === "Owe" || values.noMow === "NO-OWE" || values.noMow === "Unmowed" ? (values.noMow === "Owe" || values.noMow === "NO-OWE" ? "Owe-Mow" : values.noMow) : ""} onChange={(e) => onChange({ noMow: e.target.value })}>
             <option value="">—</option>
             <option>Yes</option>
             <option>No</option>
-            <option>Owe</option>
+            <option>Owe-Mow</option>
             <option>Unmowed</option>
           </select>
         </label>

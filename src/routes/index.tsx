@@ -1,6 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { PlatMap, SHEET_COPY, type SheetId } from "@/components/plat-maps";
+import { AuditLog, logAudit } from "@/components/wednesday/audit";
+import { HandymanBoard } from "@/components/wednesday/handyman";
+import { HomeBoard } from "@/components/wednesday/home";
+import { Inventory } from "@/components/wednesday/inventory";
+import { TreatmentPlant } from "@/components/wednesday/treatment-plant";
+import { VendorDirectory } from "@/components/wednesday/vendors";
 import { buildTodo, dayStamp, depositReminder, displayName, isRenterLot, LOTS, matches, matchesFilter, moveOutLot, parseDay, petFee, rentGap, rentTotal, sheetOf, withEmptyMow, type Guest, type Lot, type LotFilter, type LotStatus, type MaintJob, type Stay } from "@/data/lots";
 import { listVersions, readMaster, restoreVersion, saveBills, saveBoard, saveMowings, writeMaster } from "@/data/master.functions";
 import { addBusinessAttachment, deleteBusinessAttachment, deleteBusinessTask, listBusinessAttachments, listBusinessHistory, listBusinessTasks, readBusinessAttachment, saveBusinessTask, type BusinessAttachment, type BusinessHistoryEntry, type BusinessTask } from "@/data/business.functions";
@@ -1836,7 +1842,7 @@ function Home() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<LotFilter[]>([]);
   const [selected, setSelected] = useState<string | null>("1");
-  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat" | "business" | "meeting">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
+  const [view, setView] = useState<"map" | "register" | "todo" | "mow" | "increase" | "alert" | "heat" | "business" | "meeting" | "home" | "plant" | "inventory" | "handyman" | "vendors" | "audit">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "heat" ? "heat" : "map"));
   const [registerMode, setRegisterMode] = useState<"short" | "full" | "homes">("short");
   const [matchAt, setMatchAt] = useState(0);
   const [legendOn, setLegendOn] = useState(true);
@@ -1859,6 +1865,22 @@ function Home() {
   const dirtyRef = useRef(false);
   const masterReady = useRef(false);
   const mapReady = useRef(false);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const jump: Record<string, typeof view> = { h: "home", m: "map", t: "todo", w: "mow", f: "heat", b: "business", g: "meeting", r: "register", p: "plant", i: "inventory" };
+      if (event.key === "?" || (event.shiftKey && event.key === "/")) {
+        window.alert("Shortcuts: H Home, M Map, T To-Do, W Mow, F Financial, B Business, G Meeting, R Register, P Treatment Plant, I Inventory, J/K step lots, Enter open, Escape close.");
+        return;
+      }
+      const next = jump[event.key.toLowerCase()];
+      if (next) setView(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -2330,9 +2352,15 @@ function Home() {
             [
               ["todo", "To-Do"],
               ["mow", "Mow"],
+              ["handyman", "Handyman"],
+              ["inventory", "Inventory"],
+              ["plant", "Treatment Plant"],
+              ["vendors", "Vendors"],
               ["meeting", "Meeting"],
               ["business", "Business"],
               ["heat", "Financial"],
+              ["home", "Home"],
+              ["audit", "Audit"],
             ] as const
           ).map(([id, label]) => (
             <button key={id} className="tab" type="button" role="tab" aria-pressed={view === id} onClick={() => { setMapsOpen(false); setFiltersOpen(false); setDataOpen(false); setView(id); }}>
@@ -2529,11 +2557,30 @@ function Home() {
           }}
         />
       </div>
-      <div className={view === "meeting" || view === "business" ? "stage stage-full" : "stage"}>
+      <div className={view === "meeting" || view === "business" || view === "home" || view === "plant" || view === "inventory" || view === "handyman" || view === "vendors" || view === "audit" ? "stage stage-full" : "stage"}>
         <section className="map-frame">
           <div className="map-scroll">
           {!hydrated ? (
             <p className="qb-note">Loading saved lots…</p>
+          ) : view === "home" ? (
+            <HomeBoard
+              lots={lots}
+              onOpenMap={(filter) => { setView("map"); if (filter) setFilter([filter as LotFilter]); }}
+              onOpenTodo={() => setView("todo")}
+              onOpenMow={() => setView("mow")}
+              onOpenFinancial={() => setView("heat")}
+              onOpenBusiness={() => setView("business")}
+            />
+          ) : view === "plant" ? (
+            <TreatmentPlant />
+          ) : view === "inventory" ? (
+            <Inventory />
+          ) : view === "handyman" ? (
+            <HandymanBoard lots={lots} />
+          ) : view === "vendors" ? (
+            <VendorDirectory />
+          ) : view === "audit" ? (
+            <AuditLog />
           ) : view === "todo" ? (
             <TodoBoard
               lots={lots}
@@ -2638,7 +2685,7 @@ function Home() {
             </>
           ) : null}
         </section>
-        {view === "meeting" || view === "business" ? null : (
+        {view === "meeting" || view === "business" || view === "home" || view === "plant" || view === "inventory" || view === "handyman" || view === "vendors" || view === "audit" ? null : (
         <LotPanel
           lot={lot}
           lots={lots}

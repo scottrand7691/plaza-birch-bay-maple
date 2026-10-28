@@ -2117,6 +2117,51 @@ h1 {
   font-size: 14px;
 }
 
+.home-board, .plant-board, .inventory-board, .handyman-board, .vendor-board, .audit-log {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+.home-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.home-head h2 { margin: 0; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.home-card {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdf8 0%, var(--color-paper) 100%);
+  text-align: left;
+  color: var(--color-ink);
+}
+.home-card strong { font-size: 28px; }
+.home-card small { color: var(--color-muted); }
+.home-red { border-left: 4px solid #c92a2a; }
+.home-orange { border-left: 4px solid #f08c00; }
+.home-green { border-left: 4px solid #1b6b45; }
+.plant-form, .inventory-grid, .vendor-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.plant-form label, .inventory-grid label, .vendor-card { display: grid; gap: 4px; }
+.plant-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.plant-log, .audit-log ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.plant-log li, .audit-log li, .vendor-card {
+  padding: 10px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-paper);
+}
+.vendor-card.is-approved { border-left: 4px solid #1b6b45; }
+.vendor-doc.is-expired, .vendor-doc.is-missing { color: #9f1d16; }
+.vendor-doc.is-expiring { color: #9a4d00; }
+.vendor-doc.is-current { color: #146c2e; }
+.app[data-theme="dark"] .home-card,
+.app[data-theme="dark"] .plant-log li,
+.app[data-theme="dark"] .audit-log li,
+.app[data-theme="dark"] .vendor-card {
+  background: #303134;
+  color: #e8eaed;
+}
+
 .outside-lots-title {
   margin: 22px 0 10px;
   font-size: 22px;
